@@ -16,23 +16,10 @@
   
       <!--游戏区域-->
       <div class="game-board">
-        <block for="blocks">
-          <text
-            class="square"
-            style="background-color: {{ bgc[md[$item]] }};"
-            if="{{ !dark }}"
-            id="{{ $item }}"
-          >
-            {{ md[$item] }}
-          </text>
-          <text
-            class="square"
-            style="color: {{ bgc[md[$item]] }};background-color: {{ ise[$item] }}"
-            else
-            id="{{ $item }}"
-          >
-            {{ md[$item] }}
-          </text>
+        <!-- The board shape never changes.  Keep the loop static and update only
+             the 16 text values/classes after a valid move. -->
+        <block for.static="{{blocks}}">
+          <text class="{{ tileClass[$item] }}" id="{{ $item }}">{{ md[$item] }}</text>
         </block>
       </div>
   
@@ -100,16 +87,22 @@
   import folme from '@system.folme'
   import file from '@system.file'
   
-  var sc = 0,
-      ls = 0,
+  var ls = 0,
       lhs = 0,
       board = Array(4),
       added = Array(4),
       over = 0,
-      lm = Array(4),
-      that,
-      maxTile = 0,
-      maxTileHistory = 0
+      lm = Array(4)
+
+  // Band 10 has a fixed game-board geometry.  Using those constants avoids
+  // expensive getBoundingClientRect calls for every moving tile.
+  const MOVE_DURATION = 110
+  const CELL_STEP_X = 48
+  const CELL_STEP_Y = 49
+  const SAVE_DEBOUNCE = 300
+  let animationTimer = null
+  let saveTimer = null
+  let inputLocked = false
   
   // 初始化数组
   for (let i = 0; i < 4; i++) {
@@ -122,15 +115,14 @@
   const GAME_DATA_FILE = 'internal://files/2048/game_data.json'
   
   export default {
-      public: {
+      private: {
           blocks: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"],
           md: [],
+          tileClass: [],
           hsc: 0,
-          sco: sc,
+          sco: 0,
           maxTile: 0,
           maxTileHistory: 0,
-          bgc: [],
-          ise: [],
           ch: 0,
           dark: false,
           menuFlag: false,
@@ -139,17 +131,6 @@
       },
   
       onInit() {
-          that = this
-          // 初始化颜色
-          let tempc =
-              "rgba(0,0,0,0) #EFE5DA #F0E0C9 #fcb477 #ff9c61 #ff865d #ff6a38 #ebcf71 #ebcc5f #ebc94f #ebc53f #ebc22c #F2B6B6 #E8ED51 #FFE3FB #E8FF8C #FFDEC9".split(
-                  " "
-              )
-          tempc.forEach((a, index) => {
-              this.bgc[2 ** index] = a
-          })
-          this.bgc[""] = "rgba(0, 0, 0, 0)"
-  
           // 检查并创建目录
           file.access({
               uri: 'internal://files/2048',
@@ -172,7 +153,7 @@
                               lm = o.lm || lm
                               ls = o.ls || 0
                               lhs = o.lhs || 0
-                              rm0(board)
+                              rm0(this, board)
                           } else {
                               this.new_game()
                           }
@@ -204,7 +185,7 @@
                                       lm = o.lm || lm
                                       ls = o.ls || 0
                                       lhs = o.lhs || 0
-                                      rm0(board)
+                                      rm0(this, board)
                                   } else {
                                       this.new_game()
                                   }
@@ -229,6 +210,7 @@
       },
   
       chcb() {
+          if (inputLocked) return
           if (this.ch == 1 && lm && lm[0]) {
               this.hsc = lhs || 0
               this.sco = ls || 0
@@ -240,7 +222,7 @@
                   }
               }
   
-              rm0(board)
+              rm0(this, board)
               over = 0
               this.updateMaxTile()
               this.save()
@@ -254,7 +236,8 @@
       },
   
       new_game() {
-          backup()
+          if (inputLocked) return
+          backup(this)
           over = 0
           clear(board)
           
@@ -274,11 +257,12 @@
           this.sco = 0
           this.maxTile = Math.max(val1, val2)
           this.hsc = Math.max(this.hsc || 0, this.sco)
-          rm0(board)
+          rm0(this, board)
           this.save()
       },
   
       move(eve) {
+          if (inputLocked) return
           if (this.menuFlag) {
               if (eve.direction == "right") this.exit('e')
               return
@@ -286,28 +270,22 @@
   
           const direction = eve.direction.toLowerCase()
           if (["up", "down", "left", "right"].includes(direction)) {
-              backup()
+              // Snapshot into the preallocated undo board.  Do not allocate a
+              // JSON clone for every swipe.
+              backup(this, false)
               let oldMaxTile = this.maxTile // 保存移动前的最大方块值
-              let moved = mo(direction)
+              let moved = mo(this, direction)
               
               if (moved) {
+                  this.ch = 1
                   // 如果移动后最大方块值变小了，恢复原来的值
                   if (this.maxTile < oldMaxTile) {
                       this.maxTile = oldMaxTile
                   }
                   
-                  if (over) {
-                      prompt.showToast({
-                          message: "Gameover!",
-                          duration: 2000
-                      })
-                  }
-                  
                   if (this.sco > this.hsc) {
                       this.hsc = this.sco
                   }
-                  this.updateMaxTile()
-                  this.save()
               }
           }
       },
@@ -327,7 +305,42 @@
           }
       },
   
-      save() {
+      save(immediate) {
+          if (immediate) {
+              if (saveTimer) {
+                  clearTimeout(saveTimer)
+                  saveTimer = null
+              }
+              this.writeGameData()
+              return
+          }
+
+          if (saveTimer) return
+          const vm = this
+          saveTimer = setTimeout(() => {
+              saveTimer = null
+              if (vm.$valid) vm.writeGameData()
+          }, SAVE_DEBOUNCE)
+      },
+
+      onDestroy() {
+          if (animationTimer) {
+              clearTimeout(animationTimer)
+              animationTimer = null
+          }
+          if (saveTimer) {
+              clearTimeout(saveTimer)
+              saveTimer = null
+          }
+          this.writeGameData()
+          inputLocked = false
+      },
+
+      onHide() {
+          this.save(true)
+      },
+
+      writeGameData() {
           let o = {
               map: board,
               hs: this.hsc || 0,
@@ -346,7 +359,6 @@
           file.writeText({
               uri: GAME_DATA_FILE,
               text: JSON.stringify(o),
-              success: () => console.log('游戏数据保存成功'),
               fail: (err, code) => console.log(`保存失败: ${code}`)
           })
       },
@@ -367,6 +379,7 @@
   
       changeMode() {
           this.dark = !this.dark
+          rm0(this, board)
           this.save()
       },
   
@@ -382,7 +395,7 @@
   }
   
   // 辅助函数
-  function backup() {
+  function backup(vm, markUndo) {
       if (!lm || !lm[0]) {
           lm = Array(4)
           for (let i = 0; i < 4; i++) {
@@ -395,26 +408,22 @@
               lm[i][j] = board[i][j] || 0
           }
       }
-      ls = that.sco || 0
-      lhs = that.hsc || 0
-      that.ch = 1
+      ls = vm.sco || 0
+      lhs = vm.hsc || 0
+      if (markUndo !== false) vm.ch = 1
   }
   
-  function rm0(sm) {
+  function rm0(vm, sm) {
       let a = 0
       for (let i = 0; i < 4; i++) {
           for (var b = 0; 4 > b; b++) {
-              if (!sm[i][b] || sm[i][b] === 0) {
-                  that.md[a] = ""
-                  that.ise[a] = "#00000000"
-              } else {
-                  that.ise[a] = "#ffffff20"
-                  that.md[a] = sm[i][b]
-              }
+              const value = sm[i][b] || 0
+              vm.md[a] = value || ""
+              vm.tileClass[a] = "square tile-" + (vm.dark ? "dark-" : "light-") + value
               a++
           }
       }
-      that.updateMaxTile()
+      vm.updateMaxTile()
   }
   
   function clear(m) {
@@ -423,94 +432,86 @@
       }
   }
   
-  function newblock() {
-      let emptyCells = []
-      
-      // 收集所有空格子
+  function newblock(vm) {
+      // Reservoir sampling picks an empty cell in one pass and creates no
+      // temporary array / coordinate objects per move.
+      let emptyCount = 0
+      let targetRow = -1
+      let targetCol = -1
       for (let i = 0; i < 4; i++) {
           for (let j = 0; j < 4; j++) {
               if (!board[i][j]) {
-                  emptyCells.push({i, j})
+                  emptyCount++
+                  if (Math.floor(Math.random() * emptyCount) === 0) {
+                      targetRow = i
+                      targetCol = j
+                  }
               }
           }
       }
       
-      if (emptyCells.length === 0) {
+      if (emptyCount === 0) {
           checkGameOver()
           return
       }
       
-      // 随机选择一个空格子
-      let randomIndex = Math.floor(Math.random() * emptyCells.length)
-      let cell = emptyCells[randomIndex]
       let newValue = Math.random() > 0.5 ? 4 : 2
       
-      board[cell.i][cell.j] = newValue
+      board[targetRow][targetCol] = newValue
       
       // 更新最大方块值
-      if (newValue > that.maxTile) {
-          that.maxTile = newValue
+      if (newValue > vm.maxTile) {
+          vm.maxTile = newValue
       }
   }
   
-  function mo(dir) {
+  function mo(vm, dir) {
       if (over) return false; // 游戏已结束时不处理移动
   
       let moved = false
-      let oldBoard = JSON.parse(JSON.stringify(board)) // 保存移动前的状态
   
       switch (dir) {
           case "left":
-              moved = moveleft()
+              moved = moveleft(vm)
               break
           case "right":
-              moved = moveright()
+              moved = moveright(vm)
               break
           case "up":
-              moved = moveup()
+              moved = moveup(vm)
               break
           case "down":
-              moved = movedown()
+              moved = movedown(vm)
               break
       }
   
-      // 检查棋盘是否真的发生了变化
       if (moved) {
-          let boardChanged = false
-          for (let i = 0; i < 4; i++) {
-              for (let j = 0; j < 4; j++) {
-                  if (oldBoard[i][j] !== board[i][j]) {
-                      boardChanged = true
-                      break
-                  }
-              }
-              if (boardChanged) break
-          }
-  
-          if (!boardChanged) {
-              moved = false
+          clear(added)
+          if (vm.ani) {
+              // Ignore extra swipes until the frame has committed.  Without
+              // this, rapid input can queue overlapping spawn timers.
+              inputLocked = true
+              animationTimer = setTimeout(() => {
+                  animationTimer = null
+                  clearani()
+                  newblock(vm)
+                  rm0(vm, board)
+                  checkGameOver()
+                  inputLocked = false
+                  if (vm.$valid) vm.save()
+              }, MOVE_DURATION)
           } else {
-              clear(added)
-              if (that.ani) {
-                  setTimeout(() => {
-                      clearani()
-                  }, 120)
-                  setTimeout(() => {
-                      newblock()
-                      rm0(board)
-                  }, 110)
-              } else {
-                  newblock()
-                  rm0(board)
-              }
+              newblock(vm)
+              rm0(vm, board)
               checkGameOver()
+              vm.save()
           }
       }
   
       return moved
   }
   
-  function moveleft() {
+  function moveleft(vm) {
       let moved = false
       for (let a = 0; a < 4; a++) {
           for (let b = 1; b < 4; b++) {
@@ -522,7 +523,7 @@
                       if ((!target || target === 0) && noBlockHorizontal(a, c, b, board)) {
                           board[a][c] = current
                           board[a][b] = 0
-                          if (that.ani) fromTo(a * 4 + b, a * 4 + c)
+                          if (vm.ani) fromTo(a * 4 + b, a * 4 + c)
                           moved = true
                           break
                       } else if (
@@ -533,10 +534,10 @@
                       ) {
                           const newValue = target * 2
                           board[a][c] = newValue
-                          that.sco += newValue
+                          vm.sco += newValue
                           board[a][b] = 0
                           added[a][c] = 1
-                          if (that.ani) fromTo(a * 4 + b, a * 4 + c)
+                          if (vm.ani) fromTo(a * 4 + b, a * 4 + c)
                           moved = true
                           break
                       }
@@ -547,7 +548,7 @@
       return moved
   }
   
-  function moveright() {
+  function moveright(vm) {
       let moved = false
       for (let a = 0; a < 4; a++) {
           for (let b = 2; b >= 0; b--) {
@@ -559,7 +560,7 @@
                       if ((!target || target === 0) && noBlockHorizontal(a, b, c, board)) {
                           board[a][c] = current
                           board[a][b] = 0
-                          if (that.ani) fromTo(a * 4 + b, a * 4 + c)
+                          if (vm.ani) fromTo(a * 4 + b, a * 4 + c)
                           moved = true
                           break
                       } else if (
@@ -570,10 +571,10 @@
                       ) {
                           const newValue = target * 2
                           board[a][c] = newValue
-                          that.sco += newValue
+                          vm.sco += newValue
                           board[a][b] = 0
                           added[a][c] = 1
-                          if (that.ani) fromTo(a * 4 + b, a * 4 + c)
+                          if (vm.ani) fromTo(a * 4 + b, a * 4 + c)
                           moved = true
                           break
                       }
@@ -584,7 +585,7 @@
       return moved
   }
   
-  function moveup() {
+  function moveup(vm) {
       let moved = false
       for (let a = 0; a < 4; a++) {
           for (let b = 1; b < 4; b++) {
@@ -596,7 +597,7 @@
                       if ((!target || target === 0) && noBlockVertical(a, c, b, board)) {
                           board[c][a] = current
                           board[b][a] = 0
-                          if (that.ani) fromTo(b * 4 + a, c * 4 + a)
+                          if (vm.ani) fromTo(b * 4 + a, c * 4 + a)
                           moved = true
                           break
                       } else if (
@@ -607,10 +608,10 @@
                       ) {
                           const newValue = target * 2
                           board[c][a] = newValue
-                          that.sco += newValue
+                          vm.sco += newValue
                           board[b][a] = 0
                           added[c][a] = 1
-                          if (that.ani) fromTo(b * 4 + a, c * 4 + a)
+                          if (vm.ani) fromTo(b * 4 + a, c * 4 + a)
                           moved = true
                           break
                       }
@@ -621,7 +622,7 @@
       return moved
   }
   
-  function movedown() {
+  function movedown(vm) {
       let moved = false
       for (let a = 0; a < 4; a++) {
           for (let b = 2; b >= 0; b--) {
@@ -633,7 +634,7 @@
                       if ((!target || target === 0) && noBlockVertical(a, b, c, board)) {
                           board[c][a] = current
                           board[b][a] = 0
-                          if (that.ani) fromTo(b * 4 + a, c * 4 + a)
+                          if (vm.ani) fromTo(b * 4 + a, c * 4 + a)
                           moved = true
                           break
                       } else if (
@@ -644,10 +645,10 @@
                       ) {
                           const newValue = target * 2
                           board[c][a] = newValue
-                          that.sco += newValue
+                          vm.sco += newValue
                           board[b][a] = 0
                           added[c][a] = 1
-                          if (that.ani) fromTo(b * 4 + a, c * 4 + a)
+                          if (vm.ani) fromTo(b * 4 + a, c * 4 + a)
                           moved = true
                           break
                       }
@@ -659,25 +660,16 @@
   }
   
   function fromTo(id1, id2) {
-      id1 = id1.toString()
-      id2 = id2.toString()
-      
-      that.$element(id1).getBoundingClientRect({
-          success: (data1) => {
-              that.$element(id2).getBoundingClientRect({
-                  success: (data2) => {
-                      const dx = data2.left - data1.left
-                      const dy = data2.top - data1.top
-                      
-                      folme.fromTo({
-                          id: id1,
-                          fromState: {translateX: "0px", translateY: "0px"},
-                          toState: {translateX: dx + "px", translateY: dy + "px"},
-                          config: {duration: 0.1}
-                      })
-                  }
-              })
-          }
+      const from = Number(id1)
+      const to = Number(id2)
+      const dx = (to % 4 - from % 4) * CELL_STEP_X
+      const dy = (Math.floor(to / 4) - Math.floor(from / 4)) * CELL_STEP_Y
+
+      folme.fromTo({
+          id: String(id1),
+          fromState: {translateX: "0px", translateY: "0px"},
+          toState: {translateX: dx + "px", translateY: dy + "px"},
+          config: {duration: 0.1}
       })
   }
   
@@ -729,66 +721,6 @@
           message: "Game Over!",
           duration: 2000
       })
-  }
-  
-  function canMoveLeft(a) {
-      for (let b = 0; b < 4; b++) {
-          for (let c = 0; c < 4; c++) {
-              const cell = a[b][c]
-              if (cell && cell !== 0 && c != 0) {
-                  const left = a[b][c - 1]
-                  if (!left || left === 0 || left === cell) {
-                      return true
-                  }
-              }
-          }
-      }
-      return false
-  }
-  
-  function canMoveRight(a) {
-      for (let b = 0; b < 4; b++) {
-          for (let c = 0; c < 4; c++) {
-              const cell = a[b][c]
-              if (cell && cell !== 0 && c != 3) {
-                  const right = a[b][c + 1]
-                  if (!right || right === 0 || right === cell) {
-                      return true
-                  }
-              }
-          }
-      }
-      return false
-  }
-  
-  function canMoveUp(a) {
-      for (let b = 0; b < 4; b++) {
-          for (let c = 0; c < 4; c++) {
-              const cell = a[b][c]
-              if (cell && cell !== 0 && b != 0) {
-                  const up = a[b - 1][c]
-                  if (!up || up === 0 || up === cell) {
-                      return true
-                  }
-              }
-          }
-      }
-      return false
-  }
-  
-  function canMoveDown(a) {
-      for (let b = 0; b < 4; b++) {
-          for (let c = 0; c < 4; c++) {
-              const cell = a[b][c]
-              if (cell && cell !== 0 && b != 3) {
-                  const down = a[b + 1][c]
-                  if (!down || down === 0 || down === cell) {
-                      return true
-                  }
-              }
-          }
-      }
-      return false
   }
   
   function noBlockHorizontal(a, b, c, d) {
@@ -880,6 +812,50 @@
   text-align: center;
   position: relative;
   }
+
+  /* Palette lives in CSS, so a move updates class names rather than parsing
+     two inline colour styles for every cell. */
+  .tile-light-0 { background-color: rgba(0,0,0,0); }
+  .tile-light-2 { background-color: #EFE5DA; }
+  .tile-light-4 { background-color: #F0E0C9; }
+  .tile-light-8 { background-color: #fcb477; }
+  .tile-light-16 { background-color: #ff9c61; }
+  .tile-light-32 { background-color: #ff865d; }
+  .tile-light-64 { background-color: #ff6a38; }
+  .tile-light-128 { background-color: #ebcf71; }
+  .tile-light-256 { background-color: #ebcc5f; }
+  .tile-light-512 { background-color: #ebc94f; }
+  .tile-light-1024 { background-color: #ebc53f; }
+  .tile-light-2048 { background-color: #ebc22c; }
+  .tile-light-4096 { background-color: #F2B6B6; }
+  .tile-light-8192 { background-color: #E8ED51; }
+  .tile-light-16384 { background-color: #FFE3FB; }
+  .tile-light-32768 { background-color: #E8FF8C; }
+  .tile-light-65536 { background-color: #FFDEC9; }
+
+  .tile-dark-0 { color: rgba(0,0,0,0); background-color: #00000000; }
+  .tile-dark-2, .tile-dark-4, .tile-dark-8, .tile-dark-16,
+  .tile-dark-32, .tile-dark-64, .tile-dark-128, .tile-dark-256,
+  .tile-dark-512, .tile-dark-1024, .tile-dark-2048, .tile-dark-4096,
+  .tile-dark-8192, .tile-dark-16384, .tile-dark-32768, .tile-dark-65536 {
+    background-color: #ffffff20;
+  }
+  .tile-dark-2 { color: #EFE5DA; }
+  .tile-dark-4 { color: #F0E0C9; }
+  .tile-dark-8 { color: #fcb477; }
+  .tile-dark-16 { color: #ff9c61; }
+  .tile-dark-32 { color: #ff865d; }
+  .tile-dark-64 { color: #ff6a38; }
+  .tile-dark-128 { color: #ebcf71; }
+  .tile-dark-256 { color: #ebcc5f; }
+  .tile-dark-512 { color: #ebc94f; }
+  .tile-dark-1024 { color: #ebc53f; }
+  .tile-dark-2048 { color: #ebc22c; }
+  .tile-dark-4096 { color: #F2B6B6; }
+  .tile-dark-8192 { color: #E8ED51; }
+  .tile-dark-16384 { color: #FFE3FB; }
+  .tile-dark-32768 { color: #E8FF8C; }
+  .tile-dark-65536 { color: #FFDEC9; }
   
   .score {
     position: absolute;
