@@ -2,6 +2,7 @@
   "name": "2048N",
   "version": "1.0.0",
   "description": "由上游进行二开的深度性能优化与拓展完善版本",
+  "license": "AGPL-3.0-only",
   "engines": {
     "node": ">=8.10"
   },

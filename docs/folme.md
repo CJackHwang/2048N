@@ -45,7 +45,7 @@ const folme = require('@system.folme')
 }
 ```
 #### 示例代码
-来自B2048中的使用，用于实现方块从一个位置平滑移动到另一个位置的动画效果。
+来自 2048N 中的使用，用于实现方块从一个位置平滑移动到另一个位置的动画效果。
 ```javascript
 function fromTo(id1, id2) {
   id1 = id1.toString()
@@ -83,7 +83,7 @@ function fromTo(id1, id2) {
 | config | Object | 否 | 动画配置（仅delay有效） |
 
 #### 示例代码
-来自B2048中的使用，用于将方块重置到初始位置。
+来自 2048N 中的使用，用于将方块重置到初始位置。
 ```javascript
 function clearani() {
   for (let i = 0; i < 16; i++) {
@@ -123,7 +123,7 @@ function clearani() {
 | attrs | string[] | 否 | 要取消的属性列表（默认取消所有） |
 
 #### 示例代码
-来自B2048中的使用，用于取消正在进行的动画。
+来自 2048N 中的使用，用于取消正在进行的动画。
 ```javascript
 function clearani() {
   for (let i = 0; i < 16; i++) {

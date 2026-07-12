@@ -1,1 +1,6 @@
-{"a":{"b":"hello"}}
+{
+  "app": {
+    "name": "2048N",
+    "description": "A deeply optimized and extended version based on upstream secondary development."
+  }
+}

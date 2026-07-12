@@ -1,1 +1,6 @@
-{"a":{"b":"default hello"}}
+{
+  "app": {
+    "name": "2048N",
+    "description": "由上游进行二开的深度性能优化与拓展完善版本"
+  }
+}
