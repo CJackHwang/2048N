@@ -1,7 +1,8 @@
 {
-  "package": "cn.waijade.B2048",
-  "name": "2048",
-  "versionName": "1.3.5",
+  "package": "me.cjack.b2048n.rpk",
+  "name": "2048N",
+  "versionName": "1.0.0",
+  "description": "由上游进行二开的深度性能优化与拓展完善版本",
   "versionCode": 1,
   "minPlatformVersion": 1000,
   "icon": "/common/logo.png",
