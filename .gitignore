@@ -4,5 +4,6 @@
 /sign
 /dist
 /build
+/.npm-cache
 .husky/
 node_modules
