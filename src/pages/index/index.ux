@@ -100,9 +100,12 @@
   const CELL_STEP_X = 48
   const CELL_STEP_Y = 49
   const SAVE_DEBOUNCE = 300
+  const RESET_TRANSFORM_DELAY = 16
   let animationTimer = null
   let saveTimer = null
   let inputLocked = false
+  let pendingAnimations = []
+  let activeAnimationIds = []
   
   // 初始化数组
   for (let i = 0; i < 4; i++) {
@@ -418,8 +421,10 @@
       for (let i = 0; i < 4; i++) {
           for (var b = 0; 4 > b; b++) {
               const value = sm[i][b] || 0
-              vm.md[a] = value || ""
-              vm.tileClass[a] = "square tile-" + (vm.dark ? "dark-" : "light-") + value
+              const text = value || ""
+              const tileClass = "square tile-" + (vm.dark ? "dark-" : "light-") + value
+              if (vm.md[a] !== text) vm.md[a] = text
+              if (vm.tileClass[a] !== tileClass) vm.tileClass[a] = tileClass
               a++
           }
       }
@@ -469,6 +474,8 @@
       if (over) return false; // 游戏已结束时不处理移动
   
       let moved = false
+      pendingAnimations.length = 0
+      activeAnimationIds.length = 0
   
       switch (dir) {
           case "left":
@@ -491,14 +498,22 @@
               // Ignore extra swipes until the frame has committed.  Without
               // this, rapid input can queue overlapping spawn timers.
               inputLocked = true
+              startAnimations()
               animationTimer = setTimeout(() => {
                   animationTimer = null
-                  clearani()
+                  if (!vm.$valid) {
+                      inputLocked = false
+                      return
+                  }
                   newblock(vm)
                   rm0(vm, board)
                   checkGameOver()
-                  inputLocked = false
-                  if (vm.$valid) vm.save()
+                  animationTimer = setTimeout(() => {
+                      animationTimer = null
+                      clearani(activeAnimationIds)
+                      inputLocked = false
+                      if (vm.$valid) vm.save()
+                  }, RESET_TRANSFORM_DELAY)
               }, MOVE_DURATION)
           } else {
               newblock(vm)
@@ -523,7 +538,7 @@
                       if ((!target || target === 0) && noBlockHorizontal(a, c, b, board)) {
                           board[a][c] = current
                           board[a][b] = 0
-                          if (vm.ani) fromTo(a * 4 + b, a * 4 + c)
+                          if (vm.ani) queueAnimation(a * 4 + b, a * 4 + c)
                           moved = true
                           break
                       } else if (
@@ -537,7 +552,7 @@
                           vm.sco += newValue
                           board[a][b] = 0
                           added[a][c] = 1
-                          if (vm.ani) fromTo(a * 4 + b, a * 4 + c)
+                          if (vm.ani) queueAnimation(a * 4 + b, a * 4 + c)
                           moved = true
                           break
                       }
@@ -560,7 +575,7 @@
                       if ((!target || target === 0) && noBlockHorizontal(a, b, c, board)) {
                           board[a][c] = current
                           board[a][b] = 0
-                          if (vm.ani) fromTo(a * 4 + b, a * 4 + c)
+                          if (vm.ani) queueAnimation(a * 4 + b, a * 4 + c)
                           moved = true
                           break
                       } else if (
@@ -574,7 +589,7 @@
                           vm.sco += newValue
                           board[a][b] = 0
                           added[a][c] = 1
-                          if (vm.ani) fromTo(a * 4 + b, a * 4 + c)
+                          if (vm.ani) queueAnimation(a * 4 + b, a * 4 + c)
                           moved = true
                           break
                       }
@@ -597,7 +612,7 @@
                       if ((!target || target === 0) && noBlockVertical(a, c, b, board)) {
                           board[c][a] = current
                           board[b][a] = 0
-                          if (vm.ani) fromTo(b * 4 + a, c * 4 + a)
+                          if (vm.ani) queueAnimation(b * 4 + a, c * 4 + a)
                           moved = true
                           break
                       } else if (
@@ -611,7 +626,7 @@
                           vm.sco += newValue
                           board[b][a] = 0
                           added[c][a] = 1
-                          if (vm.ani) fromTo(b * 4 + a, c * 4 + a)
+                          if (vm.ani) queueAnimation(b * 4 + a, c * 4 + a)
                           moved = true
                           break
                       }
@@ -634,7 +649,7 @@
                       if ((!target || target === 0) && noBlockVertical(a, b, c, board)) {
                           board[c][a] = current
                           board[b][a] = 0
-                          if (vm.ani) fromTo(b * 4 + a, c * 4 + a)
+                          if (vm.ani) queueAnimation(b * 4 + a, c * 4 + a)
                           moved = true
                           break
                       } else if (
@@ -648,7 +663,7 @@
                           vm.sco += newValue
                           board[b][a] = 0
                           added[c][a] = 1
-                          if (vm.ani) fromTo(b * 4 + a, c * 4 + a)
+                          if (vm.ani) queueAnimation(b * 4 + a, c * 4 + a)
                           moved = true
                           break
                       }
@@ -659,23 +674,42 @@
       return moved
   }
   
-  function fromTo(id1, id2) {
+  function queueAnimation(id1, id2) {
       const from = Number(id1)
       const to = Number(id2)
       const dx = (to % 4 - from % 4) * CELL_STEP_X
       const dy = (Math.floor(to / 4) - Math.floor(from / 4)) * CELL_STEP_Y
-
-      folme.fromTo({
-          id: String(id1),
-          fromState: {translateX: "0px", translateY: "0px"},
+      const id = String(id1)
+  
+      if (activeAnimationIds.indexOf(id) < 0) activeAnimationIds.push(id)
+      pendingAnimations.push({
+          id: id,
           toState: {translateX: dx + "px", translateY: dy + "px"},
           config: {duration: 0.1}
       })
   }
   
-  function clearani() {
-      for (let i = 0; i < 16; i++) {
-          let id = i.toString()
+  function startAnimations() {
+      if (!pendingAnimations.length) return
+      if (typeof folme.startGroup === "function") {
+          folme.startGroup(pendingAnimations)
+          return
+      }
+      for (let i = 0; i < pendingAnimations.length; i++) {
+          const item = pendingAnimations[i]
+          folme.fromTo({
+              id: item.id,
+              fromState: {translateX: "0px", translateY: "0px"},
+              toState: item.toState,
+              config: item.config
+          })
+      }
+  }
+  
+  function clearani(ids) {
+      const targets = ids && ids.length ? ids : ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
+      for (let i = 0; i < targets.length; i++) {
+          let id = targets[i]
           folme.cancel({id: id})
           folme.setTo({
               id: id,
