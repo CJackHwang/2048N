@@ -83,8 +83,6 @@
   const DARK_TILE_CLASSES = {}
   const ANIMATION_CONFIG = {duration: 0.1}
   const animationFrames = Array(16)
-  const animationGroups = Array(17)
-  const fallbackAnimationFrames = Array(16)
   const resetAnimationFrames = Array(16)
   const lineValues = [0, 0, 0, 0]
   const lineSources = [0, 0, 0, 0]
@@ -129,33 +127,18 @@
       board[i] = new Array(4).fill(0)
   }
 
-  // Keep animation payloads in fixed slots; input is locked until native
-  // animation completes, so the slots are not mutated while in flight.
+  // Queue movement in fixed slots.  Folme may retain the objects passed into
+  // startGroup/fromTo, so startAnimations still hands it short-lived snapshots.
   for (let i = 0; i < 16; i++) {
-      const toState = {translateX: "0px", translateY: "0px"}
       animationFrames[i] = {
           id: CELL_IDS[i],
-          toState: toState,
-          config: ANIMATION_CONFIG
-      }
-      fallbackAnimationFrames[i] = {
-          id: CELL_IDS[i],
-          fromState: ZERO_TRANSFORM,
-          toState: toState,
-          config: ANIMATION_CONFIG
+          translateX: "0px",
+          translateY: "0px"
       }
       resetAnimationFrames[i] = {
           id: CELL_IDS[i],
           toState: ZERO_TRANSFORM
       }
-  }
-  animationGroups[0] = []
-  for (let i = 1; i <= 16; i++) {
-      const group = Array(i)
-      for (let j = 0; j < i; j++) {
-          group[j] = animationFrames[j]
-      }
-      animationGroups[i] = group
   }
 
   // Reuse the class strings that are applied to the fixed 16 cells after a
@@ -701,22 +684,34 @@
   
       activeAnimationMask = activeAnimationMask | (1 << id1)
       frame.id = CELL_IDS[id1]
-      frame.toState.translateX = dx + "px"
-      frame.toState.translateY = dy + "px"
+      frame.translateX = dx + "px"
+      frame.translateY = dy + "px"
       pendingAnimationCount++
   }
   
   function startAnimations() {
       if (!pendingAnimationCount) return
       if (typeof folme.startGroup === "function") {
-          folme.startGroup(animationGroups[pendingAnimationCount])
+          const animationFrame = new Array(pendingAnimationCount)
+          for (let i = 0; i < pendingAnimationCount; i++) {
+              const frame = animationFrames[i]
+              animationFrame[i] = {
+                  id: frame.id,
+                  toState: {translateX: frame.translateX, translateY: frame.translateY},
+                  config: ANIMATION_CONFIG
+              }
+          }
+          folme.startGroup(animationFrame)
           return
       }
       for (let i = 0; i < pendingAnimationCount; i++) {
-          const frame = fallbackAnimationFrames[i]
-          frame.id = animationFrames[i].id
-          frame.toState = animationFrames[i].toState
-          folme.fromTo(frame)
+          const frame = animationFrames[i]
+          folme.fromTo({
+              id: frame.id,
+              fromState: {translateX: "0px", translateY: "0px"},
+              toState: {translateX: frame.translateX, translateY: frame.translateY},
+              config: ANIMATION_CONFIG
+          })
       }
   }
   
