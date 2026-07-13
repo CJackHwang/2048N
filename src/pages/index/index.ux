@@ -99,7 +99,9 @@
   const MOVE_DURATION = 110
   const CELL_STEP_X = 48
   const CELL_STEP_Y = 49
-  const SAVE_DEBOUNCE = 300
+  // Delay persistent writes until a short burst of moves has settled.
+  // This keeps flash I/O and JSON allocation out of the active play path.
+  const SAVE_DEBOUNCE = 800
   const RESET_TRANSFORM_DELAY = 16
   let animationTimer = null
   let saveTimer = null
