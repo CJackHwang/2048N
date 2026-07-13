@@ -103,9 +103,14 @@
   // This keeps flash I/O and JSON allocation out of the active play path.
   const SAVE_DEBOUNCE = 800
   const RESET_TRANSFORM_DELAY = 16
+  const GC_MIN_INTERVAL = 10000
+  const TILE_PALETTE_VALUES = [0, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
+  const LIGHT_TILE_CLASSES = {}
+  const DARK_TILE_CLASSES = {}
   let animationTimer = null
   let saveTimer = null
   let inputLocked = false
+  let lastGarbageCollectionAt = 0
   const ANIMATION_CONFIG = {duration: 0.1}
   const animationSlots = Array(16)
   let pendingAnimationCount = 0
@@ -127,6 +132,14 @@
           translateX: "0px",
           translateY: "0px"
       }
+  }
+
+  // Reuse the class strings that are applied to the fixed 16 cells after a
+  // move.  This keeps ordinary moves from allocating the same strings again.
+  for (let i = 0; i < TILE_PALETTE_VALUES.length; i++) {
+      const value = TILE_PALETTE_VALUES[i]
+      LIGHT_TILE_CLASSES[value] = "square tile-light-" + value
+      DARK_TILE_CLASSES[value] = "square tile-dark-" + value
   }
   
   // 定义文件路径
@@ -283,10 +296,12 @@
           }
           this.writeGameData()
           inputLocked = false
+          requestGarbageCollection()
       },
 
       onHide() {
           this.save(true)
+          requestGarbageCollection()
       },
 
       writeGameData() {
@@ -444,18 +459,31 @@
   
   function rm0(vm, sm) {
       let a = 0
+      const tileClasses = vm.dark ? DARK_TILE_CLASSES : LIGHT_TILE_CLASSES
       for (let i = 0; i < 4; i++) {
           for (var b = 0; 4 > b; b++) {
               const value = sm[i][b] || 0
               const text = value || ""
               const paletteValue = value > 65536 ? 65536 : value
-              const tileClass = "square tile-" + (vm.dark ? "dark-" : "light-") + paletteValue
+              const tileClass = tileClasses[paletteValue] || ("square tile-" + (vm.dark ? "dark-" : "light-") + paletteValue)
               if (vm.md[a] !== text) vm.md[a] = text
               if (vm.tileClass[a] !== tileClass) vm.tileClass[a] = tileClass
               a++
           }
       }
       vm.updateMaxTile()
+  }
+
+  function requestGarbageCollection() {
+      if (typeof global === "undefined" || typeof global.runGC !== "function") return
+      const now = Date.now()
+      if (now - lastGarbageCollectionAt < GC_MIN_INTERVAL) return
+      lastGarbageCollectionAt = now
+      try {
+          global.runGC()
+      } catch (err) {
+          // Older runtimes may expose global without providing a usable GC hook.
+      }
   }
   
   function clear(m) {
