@@ -104,7 +104,9 @@
   let animationTimer = null
   let saveTimer = null
   let inputLocked = false
-  let pendingAnimations = []
+  const ANIMATION_CONFIG = {duration: 0.1}
+  const animationSlots = Array(16)
+  let pendingAnimationCount = 0
   let activeAnimationIds = []
   
   // 初始化数组
@@ -112,6 +114,17 @@
       lm[i] = new Array(4).fill(0)
       board[i] = new Array(4).fill(0)
       added[i] = new Array(4).fill(0)
+  }
+
+  // Keep the move calculation in fixed slots.  Folme may retain the objects
+  // passed to startGroup, so startAnimations creates a short-lived snapshot
+  // instead of handing these reusable objects to the native animation layer.
+  for (let i = 0; i < 16; i++) {
+      animationSlots[i] = {
+          id: "",
+          translateX: "0px",
+          translateY: "0px"
+      }
   }
   
   // 定义文件路径
@@ -486,7 +499,7 @@
       if (over) return false; // 游戏已结束时不处理移动
   
       let moved = false
-      pendingAnimations.length = 0
+      pendingAnimationCount = 0
       activeAnimationIds.length = 0
   
       switch (dir) {
@@ -692,28 +705,37 @@
       const dx = (to % 4 - from % 4) * CELL_STEP_X
       const dy = (Math.floor(to / 4) - Math.floor(from / 4)) * CELL_STEP_Y
       const id = String(id1)
+      const slot = animationSlots[pendingAnimationCount]
   
       if (activeAnimationIds.indexOf(id) < 0) activeAnimationIds.push(id)
-      pendingAnimations.push({
-          id: id,
-          toState: {translateX: dx + "px", translateY: dy + "px"},
-          config: {duration: 0.1}
-      })
+      slot.id = id
+      slot.translateX = dx + "px"
+      slot.translateY = dy + "px"
+      pendingAnimationCount++
   }
   
   function startAnimations() {
-      if (!pendingAnimations.length) return
+      if (!pendingAnimationCount) return
       if (typeof folme.startGroup === "function") {
-          folme.startGroup(pendingAnimations)
+          const animationFrame = new Array(pendingAnimationCount)
+          for (let i = 0; i < pendingAnimationCount; i++) {
+              const slot = animationSlots[i]
+              animationFrame[i] = {
+                  id: slot.id,
+                  toState: {translateX: slot.translateX, translateY: slot.translateY},
+                  config: ANIMATION_CONFIG
+              }
+          }
+          folme.startGroup(animationFrame)
           return
       }
-      for (let i = 0; i < pendingAnimations.length; i++) {
-          const item = pendingAnimations[i]
+      for (let i = 0; i < pendingAnimationCount; i++) {
+          const slot = animationSlots[i]
           folme.fromTo({
-              id: item.id,
+              id: slot.id,
               fromState: {translateX: "0px", translateY: "0px"},
-              toState: item.toState,
-              config: item.config
+              toState: {translateX: slot.translateX, translateY: slot.translateY},
+              config: ANIMATION_CONFIG
           })
       }
   }
@@ -722,7 +744,6 @@
       const targets = ids && ids.length ? ids : ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
       for (let i = 0; i < targets.length; i++) {
           let id = targets[i]
-          folme.cancel({id: id})
           folme.setTo({
               id: id,
               toState: {translateX: "0px", translateY: "0px"}
