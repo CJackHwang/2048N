@@ -78,12 +78,10 @@
   const GC_MIN_INTERVAL = 10000
   const TILE_PALETTE_VALUES = [0, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
   const CELL_IDS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
-  const ZERO_TRANSFORM = {translateX: "0px", translateY: "0px"}
   const LIGHT_TILE_CLASSES = {}
   const DARK_TILE_CLASSES = {}
   const ANIMATION_CONFIG = {duration: 0.1}
   const animationFrames = Array(16)
-  const resetAnimationFrames = Array(16)
   const lineValues = [0, 0, 0, 0]
   const lineSources = [0, 0, 0, 0]
   const outValues = [0, 0, 0, 0]
@@ -116,7 +114,6 @@
   let inputLocked = false
   let lastGarbageCollectionAt = 0
   let pendingAnimationCount = 0
-  let activeAnimationMask = 0
   let canUndo = 0
   let saveDirty = false
   let moveBackedUp = false
@@ -127,17 +124,13 @@
       board[i] = new Array(4).fill(0)
   }
 
-  // Queue movement in fixed slots.  Folme may retain the objects passed into
-  // startGroup/fromTo, so startAnimations still hands it short-lived snapshots.
+  // Queue movement in fixed slots.  Folme may retain or mutate the objects
+  // passed into animation APIs, so calls into Folme use one-shot snapshots.
   for (let i = 0; i < 16; i++) {
       animationFrames[i] = {
           id: CELL_IDS[i],
           translateX: "0px",
           translateY: "0px"
-      }
-      resetAnimationFrames[i] = {
-          id: CELL_IDS[i],
-          toState: ZERO_TRANSFORM
       }
   }
 
@@ -519,7 +512,6 @@
   
       let moved = false
       pendingAnimationCount = 0
-      activeAnimationMask = 0
       moveBackedUp = false
   
       switch (dir) {
@@ -682,7 +674,6 @@
       const dy = (Math.floor(id2 / 4) - Math.floor(id1 / 4)) * CELL_STEP_Y
       const frame = animationFrames[pendingAnimationCount]
   
-      activeAnimationMask = activeAnimationMask | (1 << id1)
       frame.id = CELL_IDS[id1]
       frame.translateX = dx + "px"
       frame.translateY = dy + "px"
@@ -717,11 +708,11 @@
   
   function clearani() {
       for (let i = 0; i < 16; i++) {
-          if (activeAnimationMask & (1 << i)) {
-              folme.setTo(resetAnimationFrames[i])
-          }
+          folme.setTo({
+              id: CELL_IDS[i],
+              toState: {translateX: "0px", translateY: "0px"}
+          })
       }
-      activeAnimationMask = 0
   }
   
   function checkGameOver() {
