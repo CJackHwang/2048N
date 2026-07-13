@@ -1,17 +1,11 @@
 <template>
     <div class="container" @swipe="move">
       <!--背景+按钮-->
-      <div class="bg" if="{{dark}}">
-        <img src="/common/bg2.png" class="bg-img" />
-        <img class="btn-reset" src="/common/reset_b.png" @click="new_game" />
-        <img class="btn-undo" src="/common/undo_b.png" @click="chcb" />
-        <img class="btn-info" src="/common/info_b.png" @click="openMenu()" />
-      </div>
-      <div class="bg" else>
-        <img src="/common/bg1.png" class="bg-img" />
-        <img class="btn-reset" src="/common/reset.png" @click="new_game" />
-        <img class="btn-undo" src="/common/undo.png" @click="chcb" />
-        <img class="btn-info" src="/common/info.png" @click="openMenu()" />
+      <div class="bg">
+        <img src="{{ dark ? '/common/bg2.png' : '/common/bg1.png' }}" class="bg-img" />
+        <img class="btn-reset" src="{{ dark ? '/common/reset_b.png' : '/common/reset.png' }}" @click="new_game" />
+        <img class="btn-undo" src="{{ dark ? '/common/undo_b.png' : '/common/undo.png' }}" @click="chcb" />
+        <img class="btn-info" src="{{ dark ? '/common/info_b.png' : '/common/info.png' }}" @click="openMenu()" />
       </div>
   
       <!--游戏区域-->
@@ -29,44 +23,23 @@
   
       <!--关于菜单-->
       <div class="menu-overlay" if="{{ menuFlag }}">
-        <scroll class="menu-content" scroll-y="true" bounces="true" id="about">
+        <scroll class="menu-content" scroll-y="true" bounces="false" id="about">
           <img src="/common/about.png" />
           <!-- 亮色/暗色切换按钮 -->
           <img 
-            src="/common/true.png" 
-            if="{{ dark }}" 
-            class="mode-btn" 
-            @click="changeMode" 
-          />
-          <img 
-            src="/common/false.png" 
-            else 
+            src="{{ dark ? '/common/true.png' : '/common/false.png' }}" 
             class="mode-btn" 
             @click="changeMode" 
           />
           <!-- 动画开关按钮 -->
           <img 
-            src="/common/true.png" 
-            if="{{ ani }}" 
-            class="ani-btn" 
-            @click="changeAni" 
-          />
-          <img 
-            src="/common/false.png" 
-            else 
+            src="{{ ani ? '/common/true.png' : '/common/false.png' }}" 
             class="ani-btn" 
             @click="changeAni" 
           />
           <!-- 计分模式切换按钮 -->
           <img 
-            src="/common/true.png" 
-            if="{{ scoreMode }}" 
-            class="score-mode-btn" 
-            @click="changeScoreMode" 
-          />
-          <img 
-            src="/common/false.png" 
-            else 
+            src="{{ scoreMode ? '/common/true.png' : '/common/false.png' }}" 
             class="score-mode-btn" 
             @click="changeScoreMode" 
           />
@@ -90,7 +63,6 @@
   var ls = 0,
       lhs = 0,
       board = Array(4),
-      added = Array(4),
       over = 0,
       lm = Array(4)
 
@@ -105,33 +77,85 @@
   const RESET_TRANSFORM_DELAY = 16
   const GC_MIN_INTERVAL = 10000
   const TILE_PALETTE_VALUES = [0, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
+  const CELL_IDS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
+  const ZERO_TRANSFORM = {translateX: "0px", translateY: "0px"}
   const LIGHT_TILE_CLASSES = {}
   const DARK_TILE_CLASSES = {}
+  const ANIMATION_CONFIG = {duration: 0.1}
+  const animationFrames = Array(16)
+  const animationGroups = Array(17)
+  const fallbackAnimationFrames = Array(16)
+  const resetAnimationFrames = Array(16)
+  const lineValues = [0, 0, 0, 0]
+  const lineSources = [0, 0, 0, 0]
+  const outValues = [0, 0, 0, 0]
+  const outFirstSources = [-1, -1, -1, -1]
+  const outSecondSources = [-1, -1, -1, -1]
+  const savePayload = {
+      map: board,
+      hs: 0,
+      sc: 0,
+      dark: false,
+      ani: true,
+      ch: 0,
+      lm: lm,
+      ls: 0,
+      lhs: 0,
+      scoreMode: true,
+      maxTile: 2,
+      maxTileHistory: 0
+  }
+  const writeOptions = {
+      uri: 'internal://files/2048/game_data.json',
+      text: "",
+      success: () => {},
+      fail: () => {
+          saveDirty = true
+      }
+  }
   let animationTimer = null
   let saveTimer = null
   let inputLocked = false
   let lastGarbageCollectionAt = 0
-  const ANIMATION_CONFIG = {duration: 0.1}
-  const animationSlots = Array(16)
   let pendingAnimationCount = 0
-  let activeAnimationIds = []
+  let activeAnimationMask = 0
+  let canUndo = 0
+  let saveDirty = false
+  let moveBackedUp = false
   
   // 初始化数组
   for (let i = 0; i < 4; i++) {
       lm[i] = new Array(4).fill(0)
       board[i] = new Array(4).fill(0)
-      added[i] = new Array(4).fill(0)
   }
 
-  // Keep the move calculation in fixed slots.  Folme may retain the objects
-  // passed to startGroup, so startAnimations creates a short-lived snapshot
-  // instead of handing these reusable objects to the native animation layer.
+  // Keep animation payloads in fixed slots; input is locked until native
+  // animation completes, so the slots are not mutated while in flight.
   for (let i = 0; i < 16; i++) {
-      animationSlots[i] = {
-          id: "",
-          translateX: "0px",
-          translateY: "0px"
+      const toState = {translateX: "0px", translateY: "0px"}
+      animationFrames[i] = {
+          id: CELL_IDS[i],
+          toState: toState,
+          config: ANIMATION_CONFIG
       }
+      fallbackAnimationFrames[i] = {
+          id: CELL_IDS[i],
+          fromState: ZERO_TRANSFORM,
+          toState: toState,
+          config: ANIMATION_CONFIG
+      }
+      resetAnimationFrames[i] = {
+          id: CELL_IDS[i],
+          toState: ZERO_TRANSFORM
+      }
+  }
+  animationGroups[0] = []
+  for (let i = 1; i <= 16; i++) {
+      const group = Array(i)
+      for (let j = 0; j < i; j++) {
+          group[j] = animationFrames[j]
+      }
+      animationGroups[i] = group
   }
 
   // Reuse the class strings that are applied to the fixed 16 cells after a
@@ -142,19 +166,15 @@
       DARK_TILE_CLASSES[value] = "square tile-dark-" + value
   }
   
-  // 定义文件路径
-  const GAME_DATA_FILE = 'internal://files/2048/game_data.json'
-  
   export default {
       private: {
-          blocks: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"],
+          blocks: CELL_IDS,
           md: [],
           tileClass: [],
           hsc: 0,
           sco: 0,
           maxTile: 0,
           maxTileHistory: 0,
-          ch: 0,
           dark: false,
           menuFlag: false,
           ani: true,
@@ -162,7 +182,6 @@
       },
   
       onInit() {
-          clear(added)
           loadGame(this)
       },
   
@@ -173,7 +192,7 @@
   
       chcb() {
           if (inputLocked) return
-          if (this.ch == 1 && lm && lm[0]) {
+          if (canUndo == 1 && lm && lm[0]) {
               this.hsc = lhs || 0
               this.sco = ls || 0
   
@@ -186,9 +205,9 @@
   
               rm0(this, board)
               over = 0
-              this.updateMaxTile()
+              syncMaxTile(this)
+              canUndo = 0
               this.save()
-              this.ch = 0
           } else {
               prompt.showToast({
                   message: "不，不可以再撤啦",
@@ -219,6 +238,9 @@
           this.sco = 0
           this.maxTile = Math.max(val1, val2)
           this.hsc = Math.max(this.hsc || 0, this.sco)
+          if (this.maxTile > this.maxTileHistory) {
+              this.maxTileHistory = this.maxTile
+          }
           rm0(this, board)
           this.save()
       },
@@ -230,58 +252,36 @@
               return
           }
   
-          const direction = eve.direction.toLowerCase()
-          if (["up", "down", "left", "right"].includes(direction)) {
-              // Snapshot into the preallocated undo board.  Do not allocate a
-              // JSON clone for every swipe.
-              backup(this, false)
-              let oldMaxTile = this.maxTile // 保存移动前的最大方块值
-              let moved = mo(this, direction)
-              
-              if (moved) {
-                  this.ch = 1
-                  // 如果移动后最大方块值变小了，恢复原来的值
-                  if (this.maxTile < oldMaxTile) {
-                      this.maxTile = oldMaxTile
-                  }
-                  
-                  if (this.sco > this.hsc) {
-                      this.hsc = this.sco
-                  }
-              }
+          switch (eve.direction) {
+              case "up":
+              case "down":
+              case "left":
+              case "right":
+                  mo(this, eve.direction)
+                  break
           }
       },
   
       updateMaxTile() {
-          let currentMax = 0
-          for (let i = 0; i < 4; i++) {
-              for (let j = 0; j < 4; j++) {
-                  if (board[i][j] > currentMax) {
-                      currentMax = board[i][j]
-                  }
-              }
-          }
-          this.maxTile = currentMax || 2
-          if (currentMax > this.maxTileHistory) {
-              this.maxTileHistory = currentMax
-          }
+          syncMaxTile(this)
       },
   
       save(immediate) {
+          saveDirty = true
           if (immediate) {
               if (saveTimer) {
                   clearTimeout(saveTimer)
                   saveTimer = null
               }
-              this.writeGameData()
+              if (saveDirty) this.writeGameData()
               return
           }
 
-          if (saveTimer) return
+          if (saveTimer) clearTimeout(saveTimer)
           const vm = this
           saveTimer = setTimeout(() => {
               saveTimer = null
-              if (vm.$valid) vm.writeGameData()
+              if (vm.$valid && saveDirty) vm.writeGameData()
           }, SAVE_DEBOUNCE)
       },
 
@@ -294,37 +294,33 @@
               clearTimeout(saveTimer)
               saveTimer = null
           }
-          this.writeGameData()
+          if (saveDirty) this.writeGameData()
           inputLocked = false
           requestGarbageCollection()
       },
 
       onHide() {
-          this.save(true)
+          if (saveDirty) this.save(true)
           requestGarbageCollection()
       },
 
       writeGameData() {
-          let o = {
-              map: board,
-              hs: this.hsc || 0,
-              sc: this.sco || 0,
-              dark: this.dark,
-              ani: this.ani,
-              ch: this.ch,
-              lm: lm || board,
-              ls: ls || this.sco,
-              lhs: lhs || this.hsc,
-              scoreMode: this.scoreMode,
-              maxTile: this.maxTile || 2,
-              maxTileHistory: this.maxTileHistory || 0
-          }
+          savePayload.map = board
+          savePayload.hs = this.hsc || 0
+          savePayload.sc = this.sco || 0
+          savePayload.dark = this.dark
+          savePayload.ani = this.ani
+          savePayload.ch = canUndo ? 1 : 0
+          savePayload.lm = lm || board
+          savePayload.ls = ls || this.sco
+          savePayload.lhs = lhs || this.hsc
+          savePayload.scoreMode = this.scoreMode
+          savePayload.maxTile = this.maxTile || 2
+          savePayload.maxTileHistory = this.maxTileHistory || 0
+          writeOptions.text = JSON.stringify(savePayload)
+          saveDirty = false
           
-          file.writeText({
-              uri: GAME_DATA_FILE,
-              text: JSON.stringify(o),
-              fail: (err, code) => console.log(`保存失败: ${code}`)
-          })
+          file.writeText(writeOptions)
       },
   
       exit(a) {
@@ -391,15 +387,17 @@
           if (!saved || !isValidBoard(saved.map)) return false
 
           copyBoard(board, saved.map)
+          let hasUndoBoard = false
           if (isValidBoard(saved.lm)) {
               copyBoard(lm, saved.lm)
+              hasUndoBoard = true
           } else {
               clear(lm)
           }
 
           vm.hsc = safeNumber(saved.hs)
           vm.sco = safeNumber(saved.sc)
-          vm.ch = saved.ch === 1 ? 1 : 0
+          canUndo = saved.ch === 1 && hasUndoBoard ? 1 : 0
           vm.dark = saved.dark === true
           vm.ani = saved.ani !== false
           vm.scoreMode = saved.scoreMode !== false
@@ -407,7 +405,9 @@
           vm.maxTileHistory = safeNumber(saved.maxTileHistory)
           ls = safeNumber(saved.ls)
           lhs = safeNumber(saved.lhs)
+          syncMaxTile(vm)
           rm0(vm, board)
+          saveDirty = false
           return true
       } catch (err) {
           return false
@@ -416,7 +416,7 @@
 
   function readGame(vm) {
       file.readText({
-          uri: GAME_DATA_FILE,
+          uri: writeOptions.uri,
           success: (res) => {
               if (!res.text || !restoreGame(vm, res.text)) vm.new_game()
           },
@@ -454,7 +454,7 @@
       }
       ls = vm.sco || 0
       lhs = vm.hsc || 0
-      if (markUndo !== false) vm.ch = 1
+      if (markUndo !== false) canUndo = 1
   }
   
   function rm0(vm, sm) {
@@ -471,7 +471,17 @@
               a++
           }
       }
-      vm.updateMaxTile()
+  }
+
+  function syncMaxTile(vm) {
+      let currentMax = 0
+      for (let i = 0; i < 4; i++) {
+          for (let j = 0; j < 4; j++) {
+              if (board[i][j] > currentMax) currentMax = board[i][j]
+          }
+      }
+      vm.maxTile = currentMax || 2
+      if (currentMax > vm.maxTileHistory) vm.maxTileHistory = currentMax
   }
 
   function requestGarbageCollection() {
@@ -493,36 +503,32 @@
   }
   
   function newblock(vm) {
-      // Reservoir sampling picks an empty cell in one pass and creates no
-      // temporary array / coordinate objects per move.
       let emptyCount = 0
-      let targetRow = -1
-      let targetCol = -1
+      for (let i = 0; i < 4; i++) {
+          for (let j = 0; j < 4; j++) {
+              if (!board[i][j]) emptyCount++
+          }
+      }
+      
+      if (emptyCount === 0) return true
+      
+      let targetEmpty = Math.floor(Math.random() * emptyCount)
+      let newValue = Math.random() > 0.5 ? 4 : 2
       for (let i = 0; i < 4; i++) {
           for (let j = 0; j < 4; j++) {
               if (!board[i][j]) {
-                  emptyCount++
-                  if (Math.floor(Math.random() * emptyCount) === 0) {
-                      targetRow = i
-                      targetCol = j
+                  if (targetEmpty === 0) {
+                      board[i][j] = newValue
+                      if (newValue > vm.maxTile) vm.maxTile = newValue
+                      if (newValue > vm.maxTileHistory) vm.maxTileHistory = newValue
+                      return emptyCount === 1
                   }
+                  targetEmpty--
               }
           }
       }
       
-      if (emptyCount === 0) {
-          checkGameOver()
-          return
-      }
-      
-      let newValue = Math.random() > 0.5 ? 4 : 2
-      
-      board[targetRow][targetCol] = newValue
-      
-      // 更新最大方块值
-      if (newValue > vm.maxTile) {
-          vm.maxTile = newValue
-      }
+      return false
   }
   
   function mo(vm, dir) {
@@ -530,7 +536,8 @@
   
       let moved = false
       pendingAnimationCount = 0
-      activeAnimationIds.length = 0
+      activeAnimationMask = 0
+      moveBackedUp = false
   
       switch (dir) {
           case "left":
@@ -548,7 +555,7 @@
       }
   
       if (moved) {
-          clear(added)
+          canUndo = 1
           if (vm.ani) {
               // Ignore extra swipes until the frame has committed.  Without
               // this, rapid input can queue overlapping spawn timers.
@@ -560,20 +567,18 @@
                       inputLocked = false
                       return
                   }
-                  newblock(vm)
+                  if (newblock(vm)) checkGameOver()
                   rm0(vm, board)
-                  checkGameOver()
                   animationTimer = setTimeout(() => {
                       animationTimer = null
-                      clearani(activeAnimationIds)
+                      clearani()
                       inputLocked = false
                       if (vm.$valid) vm.save()
                   }, RESET_TRANSFORM_DELAY)
               }, MOVE_DURATION)
           } else {
-              newblock(vm)
+              if (newblock(vm)) checkGameOver()
               rm0(vm, board)
-              checkGameOver()
               vm.save()
           }
       }
@@ -583,215 +588,148 @@
   
   function moveleft(vm) {
       let moved = false
-      for (let a = 0; a < 4; a++) {
-          for (let b = 1; b < 4; b++) {
-              const current = board[a][b]
-              if (current && current !== 0) {
-                  for (let c = 0; c < b; c++) {
-                      const target = board[a][c]
-  
-                      if ((!target || target === 0) && noBlockHorizontal(a, c, b, board)) {
-                          board[a][c] = current
-                          board[a][b] = 0
-                          if (vm.ani) queueAnimation(a * 4 + b, a * 4 + c)
-                          moved = true
-                          break
-                      } else if (
-                          target &&
-                          target === current &&
-                          noBlockHorizontal(a, c, b, board) &&
-                          0 == added[a][c]
-                      ) {
-                          const newValue = target * 2
-                          board[a][c] = newValue
-                          vm.sco += newValue
-                          board[a][b] = 0
-                          added[a][c] = 1
-                          if (vm.ani) queueAnimation(a * 4 + b, a * 4 + c)
-                          moved = true
-                          break
-                      }
-                  }
-              }
-          }
-      }
+      for (let a = 0; a < 4; a++) if (processLine(vm, a, 0, 0, 1)) moved = true
       return moved
   }
   
   function moveright(vm) {
       let moved = false
-      for (let a = 0; a < 4; a++) {
-          for (let b = 2; b >= 0; b--) {
-              const current = board[a][b]
-              if (current && current !== 0) {
-                  for (let c = 3; c > b; c--) {
-                      const target = board[a][c]
-  
-                      if ((!target || target === 0) && noBlockHorizontal(a, b, c, board)) {
-                          board[a][c] = current
-                          board[a][b] = 0
-                          if (vm.ani) queueAnimation(a * 4 + b, a * 4 + c)
-                          moved = true
-                          break
-                      } else if (
-                          target &&
-                          target === current &&
-                          noBlockHorizontal(a, b, c, board) &&
-                          0 == added[a][c]
-                      ) {
-                          const newValue = target * 2
-                          board[a][c] = newValue
-                          vm.sco += newValue
-                          board[a][b] = 0
-                          added[a][c] = 1
-                          if (vm.ani) queueAnimation(a * 4 + b, a * 4 + c)
-                          moved = true
-                          break
-                      }
-                  }
-              }
-          }
-      }
+      for (let a = 0; a < 4; a++) if (processLine(vm, a, 3, 0, -1)) moved = true
       return moved
   }
   
   function moveup(vm) {
       let moved = false
-      for (let a = 0; a < 4; a++) {
-          for (let b = 1; b < 4; b++) {
-              const current = board[b][a]
-              if (current && current !== 0) {
-                  for (let c = 0; c < b; c++) {
-                      const target = board[c][a]
-  
-                      if ((!target || target === 0) && noBlockVertical(a, c, b, board)) {
-                          board[c][a] = current
-                          board[b][a] = 0
-                          if (vm.ani) queueAnimation(b * 4 + a, c * 4 + a)
-                          moved = true
-                          break
-                      } else if (
-                          target &&
-                          target === current &&
-                          noBlockVertical(a, c, b, board) &&
-                          0 == added[c][a]
-                      ) {
-                          const newValue = target * 2
-                          board[c][a] = newValue
-                          vm.sco += newValue
-                          board[b][a] = 0
-                          added[c][a] = 1
-                          if (vm.ani) queueAnimation(b * 4 + a, c * 4 + a)
-                          moved = true
-                          break
-                      }
-                  }
-              }
-          }
-      }
+      for (let a = 0; a < 4; a++) if (processLine(vm, 0, a, 1, 0)) moved = true
       return moved
   }
   
   function movedown(vm) {
       let moved = false
-      for (let a = 0; a < 4; a++) {
-          for (let b = 2; b >= 0; b--) {
-              const current = board[b][a]
-              if (current && current !== 0) {
-                  for (let c = 3; c > b; c--) {
-                      const target = board[c][a]
-  
-                      if ((!target || target === 0) && noBlockVertical(a, b, c, board)) {
-                          board[c][a] = current
-                          board[b][a] = 0
-                          if (vm.ani) queueAnimation(b * 4 + a, c * 4 + a)
-                          moved = true
-                          break
-                      } else if (
-                          target &&
-                          target === current &&
-                          noBlockVertical(a, b, c, board) &&
-                          0 == added[c][a]
-                      ) {
-                          const newValue = target * 2
-                          board[c][a] = newValue
-                          vm.sco += newValue
-                          board[b][a] = 0
-                          added[c][a] = 1
-                          if (vm.ani) queueAnimation(b * 4 + a, c * 4 + a)
-                          moved = true
-                          break
-                      }
-                  }
+      for (let a = 0; a < 4; a++) if (processLine(vm, 3, a, -1, 0)) moved = true
+      return moved
+  }
+
+  function processLine(vm, row, col, rowStep, colStep) {
+      let count = 0
+      let target = 0
+      let scoreAdd = 0
+      let maxMerged = 0
+      let moved = false
+
+      for (let i = 0; i < 4; i++) {
+          lineValues[i] = 0
+          lineSources[i] = 0
+          outValues[i] = 0
+          outFirstSources[i] = -1
+          outSecondSources[i] = -1
+      }
+
+      for (let i = 0; i < 4; i++) {
+          const r = row + rowStep * i
+          const c = col + colStep * i
+          const value = board[r][c]
+          if (value) {
+              lineValues[count] = value
+              lineSources[count] = r * 4 + c
+              count++
+          }
+      }
+
+      for (let i = 0; i < count; i++) {
+          const value = lineValues[i]
+          if (i + 1 < count && value === lineValues[i + 1]) {
+              const merged = value * 2
+              outValues[target] = merged
+              outFirstSources[target] = lineSources[i]
+              outSecondSources[target] = lineSources[i + 1]
+              scoreAdd += merged
+              if (merged > maxMerged) maxMerged = merged
+              i++
+          } else {
+              outValues[target] = value
+              outFirstSources[target] = lineSources[i]
+          }
+          target++
+      }
+
+      for (let i = 0; i < 4; i++) {
+          const r = row + rowStep * i
+          const c = col + colStep * i
+          if (board[r][c] !== outValues[i]) {
+              moved = true
+              break
+          }
+      }
+
+      if (!moved) return false
+
+      if (!moveBackedUp) {
+          backup(vm, false)
+          moveBackedUp = true
+      }
+
+      for (let i = 0; i < 4; i++) {
+          const r = row + rowStep * i
+          const c = col + colStep * i
+          const targetId = r * 4 + c
+          board[r][c] = outValues[i]
+          if (vm.ani && outValues[i]) {
+              if (outFirstSources[i] >= 0 && outFirstSources[i] !== targetId) {
+                  queueAnimation(outFirstSources[i], targetId)
+              }
+              if (outSecondSources[i] >= 0 && outSecondSources[i] !== targetId) {
+                  queueAnimation(outSecondSources[i], targetId)
               }
           }
       }
-      return moved
+
+      if (scoreAdd) {
+          vm.sco += scoreAdd
+          if (vm.sco > vm.hsc) vm.hsc = vm.sco
+          if (maxMerged > vm.maxTile) vm.maxTile = maxMerged
+          if (maxMerged > vm.maxTileHistory) vm.maxTileHistory = maxMerged
+      }
+
+      return true
   }
   
   function queueAnimation(id1, id2) {
-      const from = Number(id1)
-      const to = Number(id2)
-      const dx = (to % 4 - from % 4) * CELL_STEP_X
-      const dy = (Math.floor(to / 4) - Math.floor(from / 4)) * CELL_STEP_Y
-      const id = String(id1)
-      const slot = animationSlots[pendingAnimationCount]
+      const dx = (id2 % 4 - id1 % 4) * CELL_STEP_X
+      const dy = (Math.floor(id2 / 4) - Math.floor(id1 / 4)) * CELL_STEP_Y
+      const frame = animationFrames[pendingAnimationCount]
   
-      if (activeAnimationIds.indexOf(id) < 0) activeAnimationIds.push(id)
-      slot.id = id
-      slot.translateX = dx + "px"
-      slot.translateY = dy + "px"
+      activeAnimationMask = activeAnimationMask | (1 << id1)
+      frame.id = CELL_IDS[id1]
+      frame.toState.translateX = dx + "px"
+      frame.toState.translateY = dy + "px"
       pendingAnimationCount++
   }
   
   function startAnimations() {
       if (!pendingAnimationCount) return
       if (typeof folme.startGroup === "function") {
-          const animationFrame = new Array(pendingAnimationCount)
-          for (let i = 0; i < pendingAnimationCount; i++) {
-              const slot = animationSlots[i]
-              animationFrame[i] = {
-                  id: slot.id,
-                  toState: {translateX: slot.translateX, translateY: slot.translateY},
-                  config: ANIMATION_CONFIG
-              }
-          }
-          folme.startGroup(animationFrame)
+          folme.startGroup(animationGroups[pendingAnimationCount])
           return
       }
       for (let i = 0; i < pendingAnimationCount; i++) {
-          const slot = animationSlots[i]
-          folme.fromTo({
-              id: slot.id,
-              fromState: {translateX: "0px", translateY: "0px"},
-              toState: {translateX: slot.translateX, translateY: slot.translateY},
-              config: ANIMATION_CONFIG
-          })
+          const frame = fallbackAnimationFrames[i]
+          frame.id = animationFrames[i].id
+          frame.toState = animationFrames[i].toState
+          folme.fromTo(frame)
       }
   }
   
-  function clearani(ids) {
-      const targets = ids && ids.length ? ids : ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
-      for (let i = 0; i < targets.length; i++) {
-          let id = targets[i]
-          folme.setTo({
-              id: id,
-              toState: {translateX: "0px", translateY: "0px"}
-          })
+  function clearani() {
+      for (let i = 0; i < 16; i++) {
+          if (activeAnimationMask & (1 << i)) {
+              folme.setTo(resetAnimationFrames[i])
+          }
       }
+      activeAnimationMask = 0
   }
   
   function checkGameOver() {
-      // 检查是否有空格子
-      for (let i = 0; i < 4; i++) {
-          for (let j = 0; j < 4; j++) {
-              if (!board[i][j]) {
-                  over = 0
-                  return
-              }
-          }
-      }
-  
       // 检查是否有可合并的相邻方块
       for (let i = 0; i < 4; i++) {
           for (let j = 0; j < 4; j++) {
@@ -818,20 +756,6 @@
           message: "Game Over!",
           duration: 2000
       })
-  }
-  
-  function noBlockHorizontal(a, b, c, d) {
-      for (b += 1; b < c; b++) {
-          if (d[a][b] && d[a][b] !== 0) return false
-      }
-      return true
-  }
-  
-  function noBlockVertical(a, b, c, d) {
-      for (b += 1; b < c; b++) {
-          if (d[b][a] && d[b][a] !== 0) return false
-      }
-      return true
   }
   </script>
   
