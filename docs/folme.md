@@ -156,9 +156,9 @@ function cancelActiveAnimations(ids) {
 | toState | Object | 是 | 目标状态属性 |
 | config | Object | 否 | 动画配置 |
 
-## 2048N 1.0.3 使用规则
+## 2048N Folme 最佳实践
 
-2048N 的最终动画策略以 `v1.0.1` 真机体感为基准，并在 1.0.3 中保留：
+2048N 的动画策略以小米手环 10 真机体感为基准：
 
 ```javascript
 const MOVE_DURATION = 110
