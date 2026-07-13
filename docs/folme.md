@@ -45,28 +45,20 @@ const folme = require('@system.folme')
 }
 ```
 #### 示例代码
-来自 2048N 中的使用，用于实现方块从一个位置平滑移动到另一个位置的动画效果。
+当前 2048N 不在移动时测量布局，而是用小米手环 10 的固定棋盘几何参数计算位移。
 ```javascript
-function fromTo(id1, id2) {
-  id1 = id1.toString()
-  id2 = id2.toString()
-  
-  that.$element(id1).getBoundingClientRect({
-    success: (data1) => {
-      that.$element(id2).getBoundingClientRect({
-        success: (data2) => {
-          const dx = data2.left - data1.left
-          const dy = data2.top - data1.top
-          
-          folme.fromTo({
-            id: id1,
-            fromState: {translateX: "0px", translateY: "0px"},
-            toState: {translateX: dx + "px", translateY: dy + "px"},
-            config: {duration: 0.1}
-          })
-        }
-      })
-    }
+const CELL_STEP_X = 48
+const CELL_STEP_Y = 49
+
+function queueAnimation(id1, id2) {
+  const dx = (id2 % 4 - id1 % 4) * CELL_STEP_X
+  const dy = (Math.floor(id2 / 4) - Math.floor(id1 / 4)) * CELL_STEP_Y
+
+  folme.fromTo({
+    id: String(id1),
+    fromState: { translateX: "0px", translateY: "0px" },
+    toState: { translateX: dx + "px", translateY: dy + "px" },
+    config: { duration: 0.1 }
   })
 }
 ```
@@ -83,15 +75,14 @@ function fromTo(id1, id2) {
 | config | Object | 否 | 动画配置（仅delay有效） |
 
 #### 示例代码
-来自 2048N 中的使用，用于将方块重置到初始位置。
+2048N 只 reset 本轮实际移动过的格子，避免无意义的桥调用。
 ```javascript
-function clearani() {
-  for (let i = 0; i < 16; i++) {
-    let id = i.toString()
-    // ...
+function clearani(ids) {
+  const targets = ids && ids.length ? ids : CELL_IDS
+  for (let i = 0; i < targets.length; i++) {
     folme.setTo({
-      id: id,
-      toState: {translateX: "0px", translateY: "0px"}
+      id: targets[i],
+      toState: { translateX: "0px", translateY: "0px" }
     })
   }
 }
@@ -123,13 +114,11 @@ function clearani() {
 | attrs | string[] | 否 | 要取消的属性列表（默认取消所有） |
 
 #### 示例代码
-来自 2048N 中的使用，用于取消正在进行的动画。
+2048N 当前主要使用 `setTo()` 清理 transform；如果后续切回 `cancel()`，也应只处理本轮实际移动过的格子。
 ```javascript
-function clearani() {
-  for (let i = 0; i < 16; i++) {
-    let id = i.toString()
-    folme.cancel({id: id})
-    // ...
+function cancelActiveAnimations(ids) {
+  for (let i = 0; i < ids.length; i++) {
+    folme.cancel({ id: ids[i] })
   }
 }
 ```
@@ -166,6 +155,89 @@ function clearani() {
 | id | string | 是 | 动画节点ID |
 | toState | Object | 是 | 目标状态属性 |
 | config | Object | 否 | 动画配置 |
+
+## 2048N 1.0.3 使用规则
+
+2048N 的最终动画策略以 `v1.0.1` 真机体感为基准，并在 1.0.3 中保留：
+
+```javascript
+const MOVE_DURATION = 110
+const RESET_TRANSFORM_DELAY = 16
+const ANIMATION_CONFIG = { duration: 0.1 }
+```
+
+核心规则：
+
+1. 只使用单层真实棋盘节点，不增加 overlay 动画层。
+2. 动画属性只使用 `translateX` / `translateY`。
+3. 棋盘格间距使用固定常量计算，不在移动时调用 `getBoundingClientRect()`。
+4. 使用 `folme.startGroup()` 批量启动动画，降低 JS 到原生动画接口的调用次数。
+5. 内部动画槽位可以复用，但传给 Folme 的数组元素和 `toState` 必须创建一次性快照。
+6. 动画结束后先提交最终棋盘 UI，再延迟 16ms reset transform。
+7. reset 只处理本轮实际动过的格子；如果没有传入 id 列表，才 fallback 到 16 格全 reset。
+
+当前清理逻辑：
+
+```javascript
+function clearani(ids) {
+  const targets = ids && ids.length ? ids : CELL_IDS
+  for (let i = 0; i < targets.length; i++) {
+    folme.setTo({
+      id: targets[i],
+      toState: { translateX: "0px", translateY: "0px" }
+    })
+  }
+}
+```
+
+当前启动逻辑：
+
+```javascript
+function startAnimations() {
+  if (!pendingAnimationCount) return
+  if (typeof folme.startGroup === "function") {
+    const animationFrame = new Array(pendingAnimationCount)
+    for (let i = 0; i < pendingAnimationCount; i++) {
+      const frame = animationFrames[i]
+      animationFrame[i] = {
+        id: frame.id,
+        toState: { translateX: frame.translateX, translateY: frame.translateY },
+        config: ANIMATION_CONFIG
+      }
+    }
+    folme.startGroup(animationFrame)
+    return
+  }
+  for (let i = 0; i < pendingAnimationCount; i++) {
+    const frame = animationFrames[i]
+    folme.fromTo({
+      id: frame.id,
+      fromState: { translateX: "0px", translateY: "0px" },
+      toState: { translateX: frame.translateX, translateY: frame.translateY },
+      config: ANIMATION_CONFIG
+    })
+  }
+}
+```
+
+## 真机踩坑记录
+
+1. 复用传给 Folme 的对象会出问题。
+   - `startGroup()` 的参数不要假设为同步拷贝。
+   - 复用对象可能导致方块错位、消失或拿到上一轮状态。
+2. 双层 overlay 棋盘不采用。
+   - 额外 16 个节点会增加响应式更新和渲染压力。
+   - 动画前等待 overlay 渲染一帧会让滑动变钝。
+   - 真机上闪烁更明显。
+3. handoff 遮盖策略不采用。
+   - 源格子临时显示目标格数字，会在 reset 回源位置时闪一下。
+4. 过短动画不采用。
+   - `95ms` / `0.09` 少滑块时看起来更快，但整体不如 `110ms` / `0.1` 稳。
+5. 全 16 格 reset 不作为常规路径。
+   - 理论上能减少残留担心，但桥调用更多，真机流畅度不如 active id reset。
+6. reset 时机不能提前。
+   - 先 reset 再提交最终棋盘 UI，会出现回弹、错位或类似消失的观感。
+   - 32ms reset 延迟会让错字闪烁暴露更久。
 
 ## 示例代码
 

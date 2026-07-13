@@ -114,6 +114,7 @@
   let inputLocked = false
   let lastGarbageCollectionAt = 0
   let pendingAnimationCount = 0
+  let activeAnimationIds = []
   let canUndo = 0
   let saveDirty = false
   let moveBackedUp = false
@@ -512,6 +513,7 @@
   
       let moved = false
       pendingAnimationCount = 0
+      activeAnimationIds.length = 0
       moveBackedUp = false
   
       switch (dir) {
@@ -546,7 +548,11 @@
                   rm0(vm, board)
                   animationTimer = setTimeout(() => {
                       animationTimer = null
-                      clearani()
+                      if (!vm.$valid) {
+                          inputLocked = false
+                          return
+                      }
+                      clearani(activeAnimationIds)
                       inputLocked = false
                       if (vm.$valid) vm.save()
                   }, RESET_TRANSFORM_DELAY)
@@ -660,21 +666,27 @@
       }
 
       if (scoreAdd) {
-          vm.sco += scoreAdd
-          if (vm.sco > vm.hsc) vm.hsc = vm.sco
-          if (maxMerged > vm.maxTile) vm.maxTile = maxMerged
-          if (maxMerged > vm.maxTileHistory) vm.maxTileHistory = maxMerged
+          applyScoreDelta(vm, scoreAdd, maxMerged)
       }
 
       return true
   }
-  
+
+  function applyScoreDelta(vm, scoreAdd, maxMerged) {
+      vm.sco += scoreAdd
+      if (vm.sco > vm.hsc) vm.hsc = vm.sco
+      if (maxMerged > vm.maxTile) vm.maxTile = maxMerged
+      if (maxMerged > vm.maxTileHistory) vm.maxTileHistory = maxMerged
+  }
+
   function queueAnimation(id1, id2) {
       const dx = (id2 % 4 - id1 % 4) * CELL_STEP_X
       const dy = (Math.floor(id2 / 4) - Math.floor(id1 / 4)) * CELL_STEP_Y
       const frame = animationFrames[pendingAnimationCount]
+      const id = CELL_IDS[id1]
   
-      frame.id = CELL_IDS[id1]
+      if (activeAnimationIds.indexOf(id) < 0) activeAnimationIds.push(id)
+      frame.id = id
       frame.translateX = dx + "px"
       frame.translateY = dy + "px"
       pendingAnimationCount++
@@ -706,10 +718,11 @@
       }
   }
   
-  function clearani() {
-      for (let i = 0; i < 16; i++) {
+  function clearani(ids) {
+      const targets = ids && ids.length ? ids : CELL_IDS
+      for (let i = 0; i < targets.length; i++) {
           folme.setTo({
-              id: CELL_IDS[i],
+              id: targets[i],
               toState: {translateX: "0px", translateY: "0px"}
           })
       }
