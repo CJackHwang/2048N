@@ -1,9 +1,9 @@
 {
   "package": "me.cjack.b2048n",
   "name": "2048N",
-  "versionName": "1.0.0",
+  "versionName": "1.0.1",
   "description": "深度性能优化与拓展完善版本",
-  "versionCode": 114,
+  "versionCode": 114514,
   "minPlatformVersion": 1000,
   "icon": "/common/logo.png",
   "deviceTypeList": [
