@@ -134,77 +134,8 @@
       },
   
       onInit() {
-          // 检查并创建目录
-          file.access({
-              uri: 'internal://files/2048',
-              success: () => {
-                  // 目录存在，加载游戏数据
-                  file.readText({
-                      uri: GAME_DATA_FILE,
-                      success: (res) => {
-                          if (res.text) {
-                              let o = JSON.parse(res.text)
-                              board = o.map || board
-                              this.hsc = o.hs || 0
-                              this.sco = o.sc || 0
-                              this.ch = o.ch || 0
-                              this.dark = o.dark || false
-                              this.ani = o.ani !== undefined ? o.ani : true
-                              this.scoreMode = o.scoreMode !== undefined ? o.scoreMode : true
-                              this.maxTile = o.maxTile || 0
-                              this.maxTileHistory = o.maxTileHistory || 0
-                              lm = o.lm || lm
-                              ls = o.ls || 0
-                              lhs = o.lhs || 0
-                              rm0(this, board)
-                          } else {
-                              this.new_game()
-                          }
-                      },
-                      fail: () => {
-                          this.new_game()
-                      }
-                  })
-              },
-              fail: () => {
-                  // 目录不存在，创建目录
-                  file.mkdir({
-                      uri: 'internal://files/2048',
-                      success: () => {
-                          file.readText({
-                              uri: GAME_DATA_FILE,
-                              success: (res) => {
-                                  if (res.text) {
-                                      let o = JSON.parse(res.text)
-                                      board = o.map || board
-                                      this.hsc = o.hs || 0
-                                      this.sco = o.sc || 0
-                                      this.ch = o.ch || 0
-                                      this.dark = o.dark || false
-                                      this.ani = o.ani !== undefined ? o.ani : true
-                                      this.scoreMode = o.scoreMode !== undefined ? o.scoreMode : true
-                                      this.maxTile = o.maxTile || 0
-                                      this.maxTileHistory = o.maxTileHistory || 0
-                                      lm = o.lm || lm
-                                      ls = o.ls || 0
-                                      lhs = o.lhs || 0
-                                      rm0(this, board)
-                                  } else {
-                                      this.new_game()
-                                  }
-                              },
-                              fail: () => {
-                                  this.new_game()
-                              }
-                          })
-                      },
-                      fail: () => {
-                          this.new_game()
-                      }
-                  })
-              }
-          })
           clear(added)
+          loadGame(this)
       },
   
       changeScoreMode() {
@@ -398,6 +329,86 @@
   }
   
   // 辅助函数
+  function isValidBoard(value) {
+      if (!Array.isArray(value) || value.length !== 4) return false
+      for (let i = 0; i < 4; i++) {
+          if (!Array.isArray(value[i]) || value[i].length !== 4) return false
+          for (let j = 0; j < 4; j++) {
+              const cell = value[i][j]
+              if (typeof cell !== "number" || !isFinite(cell) || cell < 0 || Math.floor(cell) !== cell) {
+                  return false
+              }
+          }
+      }
+      return true
+  }
+
+  function copyBoard(target, source) {
+      for (let i = 0; i < 4; i++) {
+          for (let j = 0; j < 4; j++) {
+              target[i][j] = source[i][j]
+          }
+      }
+  }
+
+  function safeNumber(value) {
+      return typeof value === "number" && isFinite(value) && value >= 0 ? value : 0
+  }
+
+  function restoreGame(vm, text) {
+      try {
+          const saved = JSON.parse(text)
+          if (!saved || !isValidBoard(saved.map)) return false
+
+          copyBoard(board, saved.map)
+          if (isValidBoard(saved.lm)) {
+              copyBoard(lm, saved.lm)
+          } else {
+              clear(lm)
+          }
+
+          vm.hsc = safeNumber(saved.hs)
+          vm.sco = safeNumber(saved.sc)
+          vm.ch = saved.ch === 1 ? 1 : 0
+          vm.dark = saved.dark === true
+          vm.ani = saved.ani !== false
+          vm.scoreMode = saved.scoreMode !== false
+          vm.maxTile = safeNumber(saved.maxTile)
+          vm.maxTileHistory = safeNumber(saved.maxTileHistory)
+          ls = safeNumber(saved.ls)
+          lhs = safeNumber(saved.lhs)
+          rm0(vm, board)
+          return true
+      } catch (err) {
+          return false
+      }
+  }
+
+  function readGame(vm) {
+      file.readText({
+          uri: GAME_DATA_FILE,
+          success: (res) => {
+              if (!res.text || !restoreGame(vm, res.text)) vm.new_game()
+          },
+          fail: () => vm.new_game()
+      })
+  }
+
+  function loadGame(vm) {
+      file.access({
+          uri: 'internal://files/2048',
+          success: () => readGame(vm),
+          fail: () => {
+              file.mkdir({
+                  uri: 'internal://files/2048',
+                  success: () => readGame(vm),
+                  // The directory may have appeared between access and mkdir.
+                  fail: () => readGame(vm)
+              })
+          }
+      })
+  }
+
   function backup(vm, markUndo) {
       if (!lm || !lm[0]) {
           lm = Array(4)
@@ -422,7 +433,8 @@
           for (var b = 0; 4 > b; b++) {
               const value = sm[i][b] || 0
               const text = value || ""
-              const tileClass = "square tile-" + (vm.dark ? "dark-" : "light-") + value
+              const paletteValue = value > 65536 ? 65536 : value
+              const tileClass = "square tile-" + (vm.dark ? "dark-" : "light-") + paletteValue
               if (vm.md[a] !== text) vm.md[a] = text
               if (vm.tileClass[a] !== tileClass) vm.tileClass[a] = tileClass
               a++
