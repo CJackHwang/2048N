@@ -1,25 +1,37 @@
 <template>
-    <div class="container" @swipe="move">
+    <div class="container {{ isRect ? 'rect-layout' : '' }}" @swipe="move">
       <!--背景+按钮-->
-      <div class="bg">
-        <img src="{{ dark ? '/common/bg2.png' : '/common/bg1.png' }}" class="bg-img" />
-        <img class="btn-reset" src="{{ dark ? '/common/reset_b.png' : '/common/reset.png' }}" @click="new_game" />
-        <img class="btn-undo" src="{{ dark ? '/common/undo_b.png' : '/common/undo.png' }}" @click="chcb" />
-        <img class="btn-info" src="{{ dark ? '/common/info_b.png' : '/common/info.png' }}" @click="openMenu()" />
+      <div class="bg {{ dark ? 'bg-dark' : 'bg-light' }}">
+        <img src="{{ dark ? '/common/bg2.png' : '/common/bg1.png' }}" class="bg-img {{ isRect ? 'rect-hide' : '' }}" />
+        <img class="btn-reset {{ isRect ? 'rect-reset' : '' }}" src="{{ dark ? '/common/reset_b.png' : '/common/reset.png' }}" @click="new_game" />
+        <img class="btn-undo {{ isRect ? 'rect-undo' : '' }}" src="{{ dark ? '/common/undo_b.png' : '/common/undo.png' }}" @click="chcb" />
+        <img class="btn-info {{ isRect ? 'rect-info' : '' }}" src="{{ dark ? '/common/info_b.png' : '/common/info.png' }}" @click="openMenu()" />
       </div>
   
       <!--游戏区域-->
-      <div class="game-board">
-        <!-- The board shape never changes.  Keep the loop static and update only
-             the 16 text values/classes after a valid move. -->
-        <block for.static="{{blocks}}">
-          <text class="{{ tileClass[$item] }}" id="{{ $item }}">{{ md[$item] }}</text>
-        </block>
+      <div class="game-board {{ dark ? 'game-board-dark' : 'game-board-light' }} {{ isRect ? (dark ? 'rect-board-dark' : 'rect-board-light') : '' }} {{ isSmallPill ? 'pill-small-board' : '' }}">
+        <!-- 固定16格，避免 Band10 的 Vela 运行时漏刷循环模板里的动态索引。 -->
+        <text class="{{ tileClass0 }}" id="0">{{ md0 }}</text>
+        <text class="{{ tileClass1 }}" id="1">{{ md1 }}</text>
+        <text class="{{ tileClass2 }}" id="2">{{ md2 }}</text>
+        <text class="{{ tileClass3 }}" id="3">{{ md3 }}</text>
+        <text class="{{ tileClass4 }}" id="4">{{ md4 }}</text>
+        <text class="{{ tileClass5 }}" id="5">{{ md5 }}</text>
+        <text class="{{ tileClass6 }}" id="6">{{ md6 }}</text>
+        <text class="{{ tileClass7 }}" id="7">{{ md7 }}</text>
+        <text class="{{ tileClass8 }}" id="8">{{ md8 }}</text>
+        <text class="{{ tileClass9 }}" id="9">{{ md9 }}</text>
+        <text class="{{ tileClass10 }}" id="10">{{ md10 }}</text>
+        <text class="{{ tileClass11 }}" id="11">{{ md11 }}</text>
+        <text class="{{ tileClass12 }}" id="12">{{ md12 }}</text>
+        <text class="{{ tileClass13 }}" id="13">{{ md13 }}</text>
+        <text class="{{ tileClass14 }}" id="14">{{ md14 }}</text>
+        <text class="{{ tileClass15 }}" id="15">{{ md15 }}</text>
       </div>
   
       <!--分数显示-->
-      <text class="score">最高 {{ scoreMode ? hsc : maxTileHistory }}</text>
-      <text class="current-score">当前 {{ scoreMode ? sco : maxTile }}</text>
+      <text class="score {{ isRect ? 'rect-score' : '' }} {{ isSmallPill ? 'pill-small-score' : '' }}">最高 {{ scoreMode ? hsc : maxTileHistory }}</text>
+      <text class="current-score {{ isRect ? 'rect-current-score' : '' }} {{ isSmallPill ? 'pill-small-current-score' : '' }}">当前 {{ scoreMode ? sco : maxTile }}</text>
   
       <!--关于菜单-->
       <div class="menu-overlay" if="{{ menuFlag }}">
@@ -48,7 +60,7 @@
   
       <!--返回按钮-->
       <img
-        class="btn-back"
+        class="btn-back {{ isRect ? 'rect-back' : '' }}"
         src="{{ dark||menuFlag ? '/common/back_b.png' : '/common/back.png' }}"
         @click="exit('e')"
       />
@@ -59,6 +71,7 @@
   import prompt from "@system.prompt"
   import folme from '@system.folme'
   import file from '@system.file'
+  import device from '@system.device'
   
   var ls = 0,
       lhs = 0,
@@ -66,11 +79,13 @@
       over = 0,
       lm = Array(4)
 
-  // Band 10 has a fixed game-board geometry.  Using those constants avoids
-  // expensive getBoundingClientRect calls for every moving tile.
+  // 动画位移跟随棋盘行列坐标，避免每次移动读取布局尺寸。
   const MOVE_DURATION = 110
   const CELL_STEP_X = 48
-  const CELL_STEP_Y = 49
+  const DEFAULT_CELL_ROW_OFFSETS = [0, 49, 98, 147]
+  // Band9 bg1.png rows start at y=180, 228, 276, 325.
+  const SMALL_PILL_CELL_ROW_OFFSETS = [0, 48, 96, 145]
+  let cellRowOffsets = DEFAULT_CELL_ROW_OFFSETS
   // Delay persistent writes until a short burst of moves has settled.
   // This keeps flash I/O and JSON allocation out of the active play path.
   const SAVE_DEBOUNCE = 800
@@ -105,6 +120,7 @@
       uri: 'internal://files/2048/game_data.json',
       text: "",
       success: () => {},
+      complete: () => {},
       fail: () => {
           saveDirty = true
       }
@@ -142,24 +158,50 @@
       LIGHT_TILE_CLASSES[value] = "square tile-light-" + value
       DARK_TILE_CLASSES[value] = "square tile-dark-" + value
   }
-  
+
   export default {
       private: {
-          blocks: CELL_IDS,
-          md: [],
-          tileClass: [],
+          md0: "", tileClass0: "square tile-light-0",
+          md1: "", tileClass1: "square tile-light-0",
+          md2: "", tileClass2: "square tile-light-0",
+          md3: "", tileClass3: "square tile-light-0",
+          md4: "", tileClass4: "square tile-light-0",
+          md5: "", tileClass5: "square tile-light-0",
+          md6: "", tileClass6: "square tile-light-0",
+          md7: "", tileClass7: "square tile-light-0",
+          md8: "", tileClass8: "square tile-light-0",
+          md9: "", tileClass9: "square tile-light-0",
+          md10: "", tileClass10: "square tile-light-0",
+          md11: "", tileClass11: "square tile-light-0",
+          md12: "", tileClass12: "square tile-light-0",
+          md13: "", tileClass13: "square tile-light-0",
+          md14: "", tileClass14: "square tile-light-0",
+          md15: "", tileClass15: "square tile-light-0",
           hsc: 0,
           sco: 0,
           maxTile: 0,
           maxTileHistory: 0,
           dark: false,
+          isRect: false,
+          isSmallPill: false,
           menuFlag: false,
           ani: true,
           scoreMode: true
       },
   
-      onInit() {
-          loadGame(this)
+      onReady() {
+          const vm = this
+          startNewGame(vm, false)
+          loadGame(vm)
+          device.getInfo({
+              success(info) {
+                  vm.isRect = !!info && info.screenShape === "rect"
+                  const width = info ? info.screenWidth : 0
+                  vm.isSmallPill = width < 100 || (width >= 190 && width <= 194)
+                  cellRowOffsets = vm.isSmallPill ? SMALL_PILL_CELL_ROW_OFFSETS : DEFAULT_CELL_ROW_OFFSETS
+                  rm0(vm, board)
+              }
+          })
       },
   
       changeScoreMode() {
@@ -196,30 +238,7 @@
       new_game() {
           if (inputLocked) return
           backup(this)
-          over = 0
-          clear(board)
-          
-          // 生成两个初始方块（确保位置不同）
-          let pos1 = Math.floor(Math.random() * 16)
-          let pos2
-          do {
-              pos2 = Math.floor(Math.random() * 16)
-          } while (pos2 === pos1)
-          
-          let val1 = Math.random() > 0.5 ? 2 : 4
-          let val2 = Math.random() > 0.5 ? 2 : 4
-          
-          board[Math.floor(pos1 / 4)][pos1 % 4] = val1
-          board[Math.floor(pos2 / 4)][pos2 % 4] = val2
-          
-          this.sco = 0
-          this.maxTile = Math.max(val1, val2)
-          this.hsc = Math.max(this.hsc || 0, this.sco)
-          if (this.maxTile > this.maxTileHistory) {
-              this.maxTileHistory = this.maxTile
-          }
-          rm0(this, board)
-          this.save()
+          startNewGame(this, true)
       },
   
       move(eve) {
@@ -391,13 +410,37 @@
       }
   }
 
+  function startNewGame(vm, persist) {
+      over = 0
+      clear(board)
+
+      let pos1 = Math.floor(Math.random() * 16)
+      let pos2
+      do {
+          pos2 = Math.floor(Math.random() * 16)
+      } while (pos2 === pos1)
+
+      let val1 = Math.random() > 0.5 ? 2 : 4
+      let val2 = Math.random() > 0.5 ? 2 : 4
+      board[Math.floor(pos1 / 4)][pos1 % 4] = val1
+      board[Math.floor(pos2 / 4)][pos2 % 4] = val2
+
+      vm.sco = 0
+      vm.maxTile = Math.max(val1, val2)
+      vm.hsc = Math.max(vm.hsc || 0, vm.sco)
+      if (vm.maxTile > vm.maxTileHistory) vm.maxTileHistory = vm.maxTile
+      rm0(vm, board)
+      if (persist) vm.save()
+  }
+
   function readGame(vm) {
       file.readText({
           uri: writeOptions.uri,
           success: (res) => {
               if (!res.text || !restoreGame(vm, res.text)) vm.new_game()
           },
-          fail: () => vm.new_game()
+          fail: () => vm.new_game(),
+          complete: () => {}
       })
   }
 
@@ -410,9 +453,11 @@
                   uri: 'internal://files/2048',
                   success: () => readGame(vm),
                   // The directory may have appeared between access and mkdir.
-                  fail: () => readGame(vm)
+                  fail: () => readGame(vm),
+                  complete: () => {}
               })
-          }
+          },
+          complete: () => {}
       })
   }
 
@@ -442,9 +487,15 @@
               const value = sm[i][b] || 0
               const text = value || ""
               const paletteValue = value > 65536 ? 65536 : value
-              const tileClass = tileClasses[paletteValue] || ("square tile-" + (vm.dark ? "dark-" : "light-") + paletteValue)
-              if (vm.md[a] !== text) vm.md[a] = text
-              if (vm.tileClass[a] !== tileClass) vm.tileClass[a] = tileClass
+              let tileClass = tileClasses[paletteValue] || ("square tile-" + (vm.dark ? "dark-" : "light-") + paletteValue)
+              if (vm.isRect && value === 0) tileClass += vm.dark ? " rect-empty-dark" : " rect-empty-light"
+              if (vm.isSmallPill) {
+                  tileClass += " pill-small-square pill-small-col-" + (a % 4) + " pill-small-row-" + Math.floor(a / 4)
+              }
+              const textKey = "md" + a
+              const classKey = "tileClass" + a
+              if (vm[textKey] !== text) vm[textKey] = text
+              if (vm[classKey] !== tileClass) vm[classKey] = tileClass
               a++
           }
       }
@@ -681,7 +732,9 @@
 
   function queueAnimation(id1, id2) {
       const dx = (id2 % 4 - id1 % 4) * CELL_STEP_X
-      const dy = (Math.floor(id2 / 4) - Math.floor(id1 / 4)) * CELL_STEP_Y
+      const sourceRow = Math.floor(id1 / 4)
+      const targetRow = Math.floor(id2 / 4)
+      const dy = cellRowOffsets[targetRow] - cellRowOffsets[sourceRow]
       const frame = animationFrames[pendingAnimationCount]
       const id = CELL_IDS[id1]
   
@@ -761,20 +814,28 @@
   <style>
   .container {
     position: relative;
-    width: 192px;
-    height: 490px;
+    width: 212px;
+    /* 540设计像素按环9屏幕宽度缩放后覆盖490像素屏高。 */
+    height: 540px;
   }
+
+  .rect-layout { height: 303px; }
   
   .bg {
     position: absolute;
     width: 100%;
     height: 100%;
   }
+
+  .bg-light { background-color: #bbada0; }
+  .bg-dark { background-color: #111111; }
   
   .bg-img {
     width: 100%;
-    height: 100%;
+    height: 520px;
   }
+
+  .rect-hide { display: none; }
   
   .btn-reset {
     position: absolute;
@@ -901,7 +962,7 @@
     position: absolute;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0);
+    background-color: #111111;
   }
   
   .menu-content {
@@ -933,4 +994,89 @@
     width: 102px;
     height: 72px;
   }
+
+  /* 矩形屏按屏幕比例重排控件。 */
+  .rect-board-light {
+    left: 8px;
+    top: 40px;
+    width: 196px;
+    height: 202px;
+    padding-top: 0;
+    padding-left: 0;
+    border-radius: 16px;
+    background-color: #ccbeb0;
+  }
+  .rect-board-dark {
+    left: 8px;
+    top: 40px;
+    width: 196px;
+    height: 202px;
+    padding-top: 0;
+    padding-left: 0;
+    border-radius: 16px;
+    background-color: #242424;
+  }
+  .rect-empty-light { background-color: #ded3c7; }
+  .rect-empty-dark { background-color: #363636; }
+  .rect-back {
+    left: 8px;
+    top: 6px;
+    width: 36px;
+    height: 26px;
+  }
+  .rect-score {
+    left: 48px;
+    top: 9px;
+    width: 78px;
+    font-size: 14px;
+  }
+  .rect-current-score {
+    left: 130px;
+    top: 9px;
+    width: 78px;
+    font-size: 14px;
+  }
+  .rect-reset {
+    left: 8px;
+    top: 250px;
+    width: 56px;
+    height: 40px;
+  }
+  .rect-undo {
+    left: 78px;
+    top: 250px;
+    width: 56px;
+    height: 40px;
+  }
+  .rect-info {
+    left: 148px;
+    top: 250px;
+    width: 56px;
+    height: 40px;
+  }
+
+  /* Band9方块直接按bg1/bg2素材坐标定位，避免flex累计取整造成右下漂移。 */
+  .pill-small-board {
+    left: 0;
+    top: 0;
+    width: 212px;
+    height: 520px;
+    padding-top: 0px;
+    padding-left: 0px;
+  }
+  .pill-small-square {
+    position: absolute;
+    margin-top: 0px;
+    margin-left: 0px;
+  }
+  .pill-small-col-0 { left: 12px; }
+  .pill-small-col-1 { left: 60px; }
+  .pill-small-col-2 { left: 108px; }
+  .pill-small-col-3 { left: 156px; }
+  .pill-small-row-0 { top: 180px; }
+  .pill-small-row-1 { top: 228px; }
+  .pill-small-row-2 { top: 276px; }
+  .pill-small-row-3 { top: 325px; }
+  .pill-small-score { top: 82px; font-size: 26px; }
+  .pill-small-current-score { top: 114px; font-size: 26px; }
   </style>

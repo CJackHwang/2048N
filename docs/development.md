@@ -1,6 +1,6 @@
 # 2048N 开发记录
 
-本文记录 2048N 在小米手环 10 / Vela 快应用环境下的真机踩坑和项目最佳实践。后续开发优先参考这里，不要只按桌面浏览器或模拟器直觉改动画。
+本文记录 2048N 对小米手环 9、9 Pro、10、10 Pro、11 的适配约定。9 与 10/11 共用胶囊屏方案并按屏幕尺寸区分，10 与 11 的屏幕布局相同；9 Pro 与 10 Pro 共用矩形屏方案。Band9 和 Band10 已完成模拟器验证，其他型号仍需真机验收。后续开发优先参考这里，不要只按桌面浏览器或模拟器直觉改动画。
 
 ## 最佳实践
 
@@ -8,6 +8,7 @@
    - `npm run build` 默认执行 `aiot release --enable-jsc --enable-protobuf`。
    - `npm run build:debug` 才生成 debug 包。
    - `manifest.config.logLevel` 设为 `off`。
+   - `designWidth` 以 212 作为胶囊屏基准；`system.device.getInfo()` 用屏宽区分 Band9 与 Band10/11 的胶囊屏布局、用屏幕形状重排 Band9 Pro/10 Pro 矩形屏。Band9 棋盘与移动动画按背景素材逐行对齐，操作区沿用随屏宽缩放的原始位置；Pro 使用居中棋盘和等尺寸底部按钮。
    - 移除未使用的 `system.router` feature，保留页面 router 配置。
 2. 响应式状态
    - 不直接驱动 UI 的状态移出页面 `private`。

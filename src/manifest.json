@@ -18,11 +18,14 @@
     },
     {
       "name": "system.file"
+    },
+    {
+      "name": "system.device"
     }
   ],
   "config": {
     "logLevel": "off",
-    "designWidth": "device-width"
+    "designWidth": 212
   },
   "router": {
     "entry": "pages/index",
