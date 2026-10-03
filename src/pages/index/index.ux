@@ -91,6 +91,8 @@
   const SAVE_DEBOUNCE = 800
   // 等 Vela 完成 DOM 更新后，多留两个渲染帧再清理 Folme。
   const RESET_TRANSFORM_DELAY = 32
+  const ANIMATION_POLL_INTERVAL = 16
+  const ANIMATION_MAX_WAIT = 320
   const GC_MIN_INTERVAL = 10000
   const TILE_PALETTE_VALUES = [0, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
   const CELL_IDS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
@@ -604,31 +606,11 @@
               // Ignore extra swipes until the frame has committed.  Without
               // this, rapid input can queue overlapping spawn timers.
               inputLocked = true
+              const animationIds = activeAnimationIds.slice()
+              const animationStartedAt = Date.now()
               startAnimations()
               animationTimer = setTimeout(() => {
-                  animationTimer = null
-                  if (!vm.$valid) {
-                      inputLocked = false
-                      return
-                  }
-                  if (newblock(vm)) checkGameOver()
-                  rm0(vm, board)
-                  vm.$nextTick(() => {
-                      if (!vm.$valid) {
-                          inputLocked = false
-                          return
-                      }
-                      animationTimer = setTimeout(() => {
-                          animationTimer = null
-                          if (!vm.$valid) {
-                              inputLocked = false
-                              return
-                          }
-                          clearani(activeAnimationIds)
-                          inputLocked = false
-                          vm.save()
-                      }, RESET_TRANSFORM_DELAY)
-                  })
+                  finishAnimatedMove(vm, animationIds, animationStartedAt)
               }, MOVE_DURATION)
           } else {
               if (newblock(vm)) checkGameOver()
@@ -792,7 +774,61 @@
           })
       }
   }
-  
+
+  function folmeAnimationsFinished(ids) {
+      if (typeof folme.getState !== "function") return true
+      for (let i = 0; i < ids.length; i++) {
+          try {
+              const state = folme.getState({id: ids[i], attr: "translateX"})
+              if (state && state.isFinished === false) return false
+          } catch (err) {
+              return true
+          }
+      }
+      return true
+  }
+
+  function finishAnimatedMove(vm, ids, startedAt) {
+      const elapsed = Date.now() - startedAt
+      if (elapsed < MOVE_DURATION ||
+          (!folmeAnimationsFinished(ids) && elapsed < ANIMATION_MAX_WAIT)) {
+          animationTimer = setTimeout(() => {
+              finishAnimatedMove(vm, ids, startedAt)
+          }, ANIMATION_POLL_INTERVAL)
+          return
+      }
+
+      animationTimer = null
+      if (!vm.$valid) {
+          inputLocked = false
+          return
+      }
+      if (newblock(vm)) checkGameOver()
+      rm0(vm, board)
+      vm.$nextTick(() => {
+          if (!vm.$valid) {
+              inputLocked = false
+              return
+          }
+          vm.$nextTick(() => {
+              if (!vm.$valid) {
+                  inputLocked = false
+                  return
+              }
+              animationTimer = setTimeout(() => {
+                  animationTimer = null
+                  if (!vm.$valid) {
+                      inputLocked = false
+                      return
+                  }
+                  clearani(ids)
+                  inputLocked = false
+                  vm.save()
+              }, RESET_TRANSFORM_DELAY)
+          })
+      })
+  }
+
   function clearani(ids) {
       const targets = ids && ids.length ? ids : CELL_IDS
       for (let i = 0; i < targets.length; i++) {
