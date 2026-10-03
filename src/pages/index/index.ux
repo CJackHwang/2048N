@@ -10,6 +10,7 @@
   
       <!--游戏区域-->
       <div class="game-board {{ dark ? 'game-board-dark' : 'game-board-light' }} {{ isRect ? (dark ? 'rect-board-dark' : 'rect-board-light') : '' }} {{ isSmallPill ? 'pill-small-board' : '' }}">
+        <img if="{{ isRect }}" class="rect-grid" src="{{ dark ? '/common/rect-grid-dark.png' : '/common/rect-grid-light.png' }}" />
         <!-- 固定16格，避免 Band10 的 Vela 运行时漏刷循环模板里的动态索引。 -->
         <text class="{{ tileClass0 }}" id="0">{{ md0 }}</text>
         <text class="{{ tileClass1 }}" id="1">{{ md1 }}</text>
@@ -515,7 +516,6 @@
               let tileClass = cachedSmallPillClasses
                   ? cachedSmallPillClasses[a]
                   : (tileClasses[paletteValue] || ("square tile-" + (vm.dark ? "dark-" : "light-") + paletteValue))
-              if (vm.isRect && value === 0) tileClass += vm.dark ? " rect-empty-dark" : " rect-empty-light"
               if (vm.isSmallPill && !cachedSmallPillClasses) {
                   tileClass += " pill-small-square pill-small-col-" + (a % 4) + " pill-small-row-" + Math.floor(a / 4)
               }
@@ -741,7 +741,7 @@
       const dy = cellRowOffsets[targetRow] - cellRowOffsets[sourceRow]
       const frame = animationFrames[pendingAnimationCount]
       const id = CELL_IDS[id1]
-  
+
       if (activeAnimationIds.indexOf(id) < 0) activeAnimationIds.push(id)
       frame.id = id
       frame.translateX = dx + "px"
@@ -1069,8 +1069,14 @@
     border-radius: 16px;
     background-color: #242424;
   }
-  .rect-empty-light { background-color: #ded3c7; }
-  .rect-empty-dark { background-color: #363636; }
+  /* Pro 空格网格固定在底图，动画文本节点始终绘制在其上。 */
+  .rect-grid {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 196px;
+    height: 202px;
+  }
   .rect-back {
     left: 8px;
     top: 6px;
