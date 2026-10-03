@@ -89,7 +89,7 @@
   // Delay persistent writes until a short burst of moves has settled.
   // This keeps flash I/O and JSON allocation out of the active play path.
   const SAVE_DEBOUNCE = 800
-  // 等 Vela 完成 DOM 更新后，多留两个渲染帧再清理 Folme。
+  // 等 Vela 完成一次 DOM 更新后，再延迟清理 Folme。
   const RESET_TRANSFORM_DELAY = 32
   const ANIMATION_POLL_INTERVAL = 16
   const ANIMATION_MAX_WAIT = 320
@@ -810,22 +810,16 @@
               inputLocked = false
               return
           }
-          vm.$nextTick(() => {
+          animationTimer = setTimeout(() => {
+              animationTimer = null
               if (!vm.$valid) {
                   inputLocked = false
                   return
               }
-              animationTimer = setTimeout(() => {
-                  animationTimer = null
-                  if (!vm.$valid) {
-                      inputLocked = false
-                      return
-                  }
-                  clearani(ids)
-                  inputLocked = false
-                  vm.save()
-              }, RESET_TRANSFORM_DELAY)
-          })
+              clearani(ids)
+              inputLocked = false
+              vm.save()
+          }, RESET_TRANSFORM_DELAY)
       })
   }
 

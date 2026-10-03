@@ -176,7 +176,7 @@ const ANIMATION_CONFIG = { duration: 0.1 }
 4. 使用 `folme.startGroup()` 批量启动动画，降低 JS 到原生动画接口的调用次数。
 5. 内部动画槽位可以复用，但传给 Folme 的数组元素和 `toState` 必须创建一次性快照。
 6. 至少经过 `MOVE_DURATION` 后，通过 `getState()` 确认本轮移动方块完成；接口不可用时回退到固定时长，并限制最长等待 320ms。
-7. 提交最终棋盘数据后连续等待两次 `vm.$nextTick()`，再延迟 32ms reset transform，避免移动方块在文字落位前回到源位置。
+7. 提交最终棋盘数据后等待一次 `vm.$nextTick()`，再延迟 32ms reset transform，避免移动方块在文字落位前回到源位置；避免嵌套 nextTick 触发模拟器运行时释放异常。
 8. reset 只处理本轮实际动过的格子；如果没有传入 id 列表，才 fallback 到 16 格全 reset。
 
 当前清理逻辑（`setTo()` 中断动画并直接回到基位）：
