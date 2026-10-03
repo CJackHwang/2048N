@@ -95,6 +95,8 @@
   const CELL_IDS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
   const LIGHT_TILE_CLASSES = {}
   const DARK_TILE_CLASSES = {}
+  const SMALL_PILL_LIGHT_TILE_CLASSES = {}
+  const SMALL_PILL_DARK_TILE_CLASSES = {}
   const ANIMATION_CONFIG = {duration: 0.1}
   const animationFrames = Array(16)
   const lineValues = [0, 0, 0, 0]
@@ -155,8 +157,19 @@
   // move.  This keeps ordinary moves from allocating the same strings again.
   for (let i = 0; i < TILE_PALETTE_VALUES.length; i++) {
       const value = TILE_PALETTE_VALUES[i]
-      LIGHT_TILE_CLASSES[value] = "square tile-light-" + value
-      DARK_TILE_CLASSES[value] = "square tile-dark-" + value
+      const lightClass = "square tile-light-" + value
+      const darkClass = "square tile-dark-" + value
+      LIGHT_TILE_CLASSES[value] = lightClass
+      DARK_TILE_CLASSES[value] = darkClass
+      const lightSmallClasses = []
+      const darkSmallClasses = []
+      for (let cell = 0; cell < 16; cell++) {
+          const positionClass = " pill-small-square pill-small-col-" + (cell % 4) + " pill-small-row-" + Math.floor(cell / 4)
+          lightSmallClasses[cell] = lightClass + positionClass
+          darkSmallClasses[cell] = darkClass + positionClass
+      }
+      SMALL_PILL_LIGHT_TILE_CLASSES[value] = lightSmallClasses
+      SMALL_PILL_DARK_TILE_CLASSES[value] = darkSmallClasses
   }
 
   export default {
@@ -482,14 +495,20 @@
   function rm0(vm, sm) {
       let a = 0
       const tileClasses = vm.dark ? DARK_TILE_CLASSES : LIGHT_TILE_CLASSES
+      const smallPillTileClasses = vm.isSmallPill
+          ? (vm.dark ? SMALL_PILL_DARK_TILE_CLASSES : SMALL_PILL_LIGHT_TILE_CLASSES)
+          : null
       for (let i = 0; i < 4; i++) {
           for (var b = 0; 4 > b; b++) {
               const value = sm[i][b] || 0
               const text = value || ""
               const paletteValue = value > 65536 ? 65536 : value
-              let tileClass = tileClasses[paletteValue] || ("square tile-" + (vm.dark ? "dark-" : "light-") + paletteValue)
+              const cachedSmallPillClasses = smallPillTileClasses && smallPillTileClasses[paletteValue]
+              let tileClass = cachedSmallPillClasses
+                  ? cachedSmallPillClasses[a]
+                  : (tileClasses[paletteValue] || ("square tile-" + (vm.dark ? "dark-" : "light-") + paletteValue))
               if (vm.isRect && value === 0) tileClass += vm.dark ? " rect-empty-dark" : " rect-empty-light"
-              if (vm.isSmallPill) {
+              if (vm.isSmallPill && !cachedSmallPillClasses) {
                   tileClass += " pill-small-square pill-small-col-" + (a % 4) + " pill-small-row-" + Math.floor(a / 4)
               }
               const textKey = "md" + a
