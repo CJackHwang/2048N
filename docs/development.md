@@ -1,11 +1,12 @@
 # 2048N 开发记录
 
-本文记录 2048N 对小米手环 9、9 Pro、10、10 Pro、11 的适配约定。9 与 10/11 共用胶囊屏方案并按屏幕尺寸区分，10 与 11 的屏幕布局相同；9 Pro 与 10 Pro 共用矩形屏方案。Band9 和 Band10 已完成模拟器验证，其他型号仍需真机验收。后续开发优先参考这里，不要只按桌面浏览器或模拟器直觉改动画。
+本文记录 2048N 对小米手环 9、9 Pro、10、10 Pro、11 的适配约定。9 与 10/11 共用胶囊屏方案并按屏幕尺寸区分，10 与 11 的屏幕布局相同；9 Pro 与 10 Pro 共用矩形屏方案。Band9、Band10、BandPro 已在 Vela 5 模拟器完成命令行启动验证，Band11 与 10 共用布局但仍需真机验收。后续开发优先参考这里，不要只按桌面浏览器或模拟器直觉改动画。
 
 ## 最佳实践
 
 1. 构建配置
-   - `npm run build` 默认执行 `aiot release --enable-jsc --enable-protobuf`。
+   - `npm run build` 默认执行 `aiot release --enable-jsc`，不启用 Protobuf 二进制模板。
+   - `npm run build:compat` 生成不含 JSC 的兼容包；只有目标设备运行时不支持 JSC 时才使用。
    - `npm run build:debug` 才生成 debug 包。
    - `manifest.config.logLevel` 设为 `off`。
    - `designWidth` 以 212 作为胶囊屏基准；`system.device.getInfo()` 用屏宽区分 Band9 与 Band10/11 的胶囊屏布局、用屏幕形状重排 Band9 Pro/10 Pro 矩形屏。Band9 棋盘与移动动画按背景素材逐行对齐，操作区沿用随屏宽缩放的原始位置；Pro 使用居中棋盘和等尺寸底部按钮。
@@ -43,6 +44,16 @@
    - 传给 Folme 的参数使用一次性快照。
    - 只 reset 本轮实际动过的格子。
    - 不要仅凭“理论上更干净”改成全 16 格 reset；真机体感以 active id reset 为准。
+
+## 模拟器命令行启动
+
+```bash
+npm run emulator -- --device band9 --once
+npm run emulator -- --device band10 --once
+npm run emulator -- --device bandpro --once
+```
+
+脚本会自动选择当前局域网 IPv4，写入并推送 `/tmp/quickapp_debug_cfg.json`，再用 `pushAndInstall` 安装 RPK 后启动应用。直接执行 `adb shell am start` 而不推送这份配置，`vappxms` 会停在等待调试服务，画面表现为黑屏。当前 Vela 5 模拟器支持 JSC，但加载 Protobuf 二进制模板会在样式初始化阶段触发断言，因此默认 release 保留 JSC、关闭 Protobuf。
 
 ## 已踩坑
 
@@ -98,4 +109,4 @@
 - 不新增动画层，除非真机测试明确证明收益。
 - 动画优化必须真机验证，不能只看构建成功或理论分配量。
 - 如需继续压榨性能，优先优化非动画路径；动画的最强性能开关仍是用户设置中的动画开关。
-- Band9 小屏棋盘的位置类名在模块初始化时预计算，刷新时只复用缓存；不要在 `rm0()` 中恢复逐格字符串拼接。
+- 小屏棋盘的位置类名以及 16 个文本/样式绑定键在模块初始化时预计算，刷新时只复用缓存；不要在 `rm0()` 中恢复逐格字符串拼接。

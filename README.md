@@ -26,7 +26,7 @@
    - 移动后按需更新方块内容和样式
    - 文件保存使用真正防抖与脏标记，降低频繁写入开销
    - 移除未引用图片素材，减少 RPK 包体
-   - 默认使用 release/JSC/Protobuf 打包，面向真机运行性能
+   - 默认使用 release/JSC 打包，兼容当前 Vela 5 模拟器；不启用 Protobuf 二进制模板
 
 ## CJackHwang 优化说明（截止目前）
 
@@ -38,10 +38,12 @@
 
 ## 性能优化记录
 
-当前版本围绕小米手环 10 的低内存和低功耗环境做了以下优化：
+当前版本围绕小米手环 9、9 Pro、10、10 Pro、11 的共用棋盘逻辑，以及胶囊屏/矩形屏两套布局做了以下优化：
 
 1. 打包与运行配置
-   - `npm run build` 默认执行 `aiot release --enable-jsc --enable-protobuf`，真机调试默认生成 release 包。
+   - `npm run build` 默认执行 `aiot release --enable-jsc`，生成可在当前 Vela 5 模拟器和目标设备运行的 release 包。
+   - 不启用 Protobuf 二进制模板：当前 Vela 5 模拟器加载 `style.bin/template.bin` 会在启动阶段触发运行时断言。
+   - `npm run build:compat` 生成不含 JSC 的兼容包，用于排查设备运行时差异。
    - 保留 `npm run build:debug` 用于显式生成 debug 包。
    - `manifest` 中关闭运行日志输出，降低发布包运行时干扰。
    - 移除未使用的 `system.router` feature，仅保留实际使用的 `system.prompt`、`system.file`、`system.folme`。
@@ -78,7 +80,7 @@
    - 关于菜单继续使用 `if`，关闭后从 VDOM 移除长图和菜单节点。
    - 菜单滚动关闭 bounce，减少小屏设备上不必要的滚动物理开销。
    - 方块仍使用 `<text>` + CSS 绘制，不使用方块图片素材，降低资源解码和内存成本。
-   - 预计算 Band9 小屏每格的位置类名，避免每次棋盘刷新重复拼接字符串。
+   - 预计算小屏每格的位置类名以及 16 个文本/样式绑定键，所有设备刷新棋盘时复用固定字符串。
 
 ## 原型协作
 
@@ -102,13 +104,33 @@
 npm run build
 ```
 
-`npm run build` 默认生成 release 包，并启用 JSC 和 Protobuf。构建产物会输出到 `dist/` 目录，RPK 文件名会使用当前 manifest 中的包名和版本号。
+`npm run build` 默认生成 release/JSC 包且不启用 Protobuf 二进制模板。构建产物会输出到 `dist/` 目录，RPK 文件名会使用当前 manifest 中的包名和版本号。
+
+如需生成不含 JSC 的兼容包，可执行：
+
+```bash
+npm run build:compat
+```
+
+当前 Vela 5 模拟器验收使用默认包；Protobuf 二进制模板会在页面启动阶段触发运行时断言。
 
 如需生成 debug 包：
 
 ```bash
 npm run build:debug
 ```
+
+### 命令行启动模拟器
+
+AIoT-IDE 之外可以直接用同一套调试配置启动模拟器、安装 release 包并打开应用：
+
+```bash
+npm run emulator -- --device band9 --once
+npm run emulator -- --device band10 --once
+npm run emulator -- --device bandpro --once
+```
+
+`--once` 会在启动后保存一张截图并自动关闭模拟器；去掉它可以保持模拟器运行，按 `Ctrl-C` 关闭。脚本会自动读取当前局域网地址生成 `/tmp/quickapp_debug_cfg.json`，避免 IDE 配置残留旧地址导致黑屏。
 
 ### 签名证书
 

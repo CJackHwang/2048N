@@ -8,9 +8,11 @@
   },
   "scripts": {
     "start": "aiot start --watch",
-    "build": "aiot release --enable-jsc --enable-protobuf",
+    "build": "aiot release --enable-jsc",
+    "build:compat": "aiot release",
     "build:debug": "aiot build",
-    "release": "aiot release --enable-jsc --enable-protobuf",
+    "release": "aiot release --enable-jsc",
+    "emulator": "node scripts/vela-emulator.js",
     "lint": "eslint --format codeframe --fix --ext .ux,.js src/"
   },
   "lint-staged": {

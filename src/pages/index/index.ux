@@ -97,6 +97,8 @@
   const DARK_TILE_CLASSES = {}
   const SMALL_PILL_LIGHT_TILE_CLASSES = {}
   const SMALL_PILL_DARK_TILE_CLASSES = {}
+  const CELL_TEXT_KEYS = Array(16)
+  const CELL_CLASS_KEYS = Array(16)
   const ANIMATION_CONFIG = {duration: 0.1}
   const animationFrames = Array(16)
   const lineValues = [0, 0, 0, 0]
@@ -146,6 +148,8 @@
   // Queue movement in fixed slots.  Folme may retain or mutate the objects
   // passed into animation APIs, so calls into Folme use one-shot snapshots.
   for (let i = 0; i < 16; i++) {
+      CELL_TEXT_KEYS[i] = "md" + i
+      CELL_CLASS_KEYS[i] = "tileClass" + i
       animationFrames[i] = {
           id: CELL_IDS[i],
           translateX: "0px",
@@ -511,8 +515,8 @@
               if (vm.isSmallPill && !cachedSmallPillClasses) {
                   tileClass += " pill-small-square pill-small-col-" + (a % 4) + " pill-small-row-" + Math.floor(a / 4)
               }
-              const textKey = "md" + a
-              const classKey = "tileClass" + a
+              const textKey = CELL_TEXT_KEYS[a]
+              const classKey = CELL_CLASS_KEYS[a]
               if (vm[textKey] !== text) vm[textKey] = text
               if (vm[classKey] !== tileClass) vm[classKey] = tileClass
               a++
@@ -959,7 +963,7 @@
   
   .score {
     position: absolute;
-    left: 0;
+    left: 0px;
     top: 84px;
     width: 100%;
     font-size: 28px;
@@ -969,7 +973,7 @@
   
   .current-score {
     position: absolute;
-    left: 0;
+    left: 0px;
     top: 122px;
     width: 100%;
     font-size: 28px;
@@ -1020,8 +1024,8 @@
     top: 40px;
     width: 196px;
     height: 202px;
-    padding-top: 0;
-    padding-left: 0;
+    padding-top: 0px;
+    padding-left: 0px;
     border-radius: 16px;
     background-color: #ccbeb0;
   }
@@ -1030,8 +1034,8 @@
     top: 40px;
     width: 196px;
     height: 202px;
-    padding-top: 0;
-    padding-left: 0;
+    padding-top: 0px;
+    padding-left: 0px;
     border-radius: 16px;
     background-color: #242424;
   }
@@ -1076,8 +1080,8 @@
 
   /* Band9方块直接按bg1/bg2素材坐标定位，避免flex累计取整造成右下漂移。 */
   .pill-small-board {
-    left: 0;
-    top: 0;
+    left: 0px;
+    top: 0px;
     width: 212px;
     /* 末行方块底部在 y369，缩小命中层避免遮住下方按钮。 */
     height: 370px;
