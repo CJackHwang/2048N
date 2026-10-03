@@ -38,7 +38,7 @@
 7. 动画基准
    - `MOVE_DURATION = 110`。
    - `ANIMATION_CONFIG = { duration: 0.1 }`。
-   - `RESET_TRANSFORM_DELAY = 16`。
+   - `RESET_TRANSFORM_DELAY = 32`；先提交最终棋盘 UI，再清理 Folme 位移。
    - 使用单层真实棋盘节点，不增加 overlay 节点。
    - `folme.startGroup()` 批量启动动画。
    - 传给 Folme 的参数使用一次性快照。
@@ -56,6 +56,36 @@ npm run emulator -- --device bandpro --once
 脚本会自动选择当前局域网 IPv4，写入并推送 `/tmp/quickapp_debug_cfg.json`，再用 `pushAndInstall` 安装 RPK 后启动应用。直接执行 `adb shell am start` 而不推送这份配置，`vappxms` 会停在等待调试服务，画面表现为黑屏。当前 Vela 5 模拟器支持 JSC，但加载 Protobuf 二进制模板会在样式初始化阶段触发断言，因此默认 release 保留 JSC、关闭 Protobuf。
 
 ## 已踩坑
+
+### 屏幕布局与资源适配
+
+- Band9 的背景素材行距不是可安全交给 flex 自动分配的等距网格；累计取整会让方块逐行漂移。使用预计算的屏幕专用行偏移，动画位移和静态背景必须共用同一组坐标。
+- Band9/10/11 胶囊屏与 Band9 Pro/10 Pro 矩形屏不能只靠统一缩放解决。Pro 需要独立的居中棋盘、统一按钮尺寸和顶部双分数布局；设备分组通过 `screenShape` / `screenWidth` 判断。
+- 应用图标的有效内容必须直接占满 `192×192` 资源画布；多余透明边缘会让桌面图标显示尺寸偏小或视觉不圆。
+
+### Band10 模拟器滑动崩溃
+
+2026-10-04 的 Band10 模拟器日志确认这是运行时崩溃，不是棋盘合并算法报错：
+
+- NuttX 报告 `arm_dataabort.c:161`，进程为 `vappxms me.cjack.b2048n`。
+- 故障栈落在 `jse_free_value()`，调用链为 `invokeNextTick()` → `addMapPending()` → `UVTaskQueue`；寄存器中出现 `0xffffffff`，属于 JS 回调释放阶段的非法指针访问。
+- `system_folme_wrap_to` 出现在任务转储中，说明 Folme 调度参与了触发时序，但日志没有把 `folme.getState()` 指到故障栈。
+- `coredump device not found` 表示模拟器没有保存完整 core，不能把它当作根因。
+
+触发组合是 Folme 移动动画和嵌套 `vm.$nextTick()`。1.0.3 使用单层 `nextTick`，没有出现这类崩溃；当前实现也必须保持单层 `nextTick`，再延迟 32ms 清理位移。
+
+修复原则：
+
+1. `rm0()` 提交最终棋盘后只等待一次 `vm.$nextTick()`。
+2. 通过 32ms 定时器调用 `folme.setTo()` 清理本轮实际动过的格子。
+3. `folme.getState()` 对全系列统一启用；接口不存在或抛错时回退到固定时长，不根据“模拟器”型号做未经日志证明的永久分支。
+
+### 模拟器输入与日志边界
+
+- Vela NuttX 模拟器不支持常规 `adb shell input` / `logcat` 路径；自动 gRPC 触摸也可能没有送到 QuickApp 页面，因此自动化“未崩溃”不能替代 IDE 手动滑动验收。
+- `npm run emulator -- --device <name> --once` 会在安装、启动、截图后主动停止模拟器；退出码 0 只说明脚本收尾成功，不能据此判断手势稳定性。
+- 模拟器启动日志中的 D-Bus、RIL、LVGL stack、QEMU 权限等错误是环境噪声；只有和 `vappxms` 的断言/回溯同一时间段出现时才进入崩溃根因分析。
+- IDE 黑屏时先确认 `/tmp/quickapp_debug_cfg.json` 已推送，再启动应用；直接 `adb shell am start` 可能让 `vappxms` 等待调试服务。
 
 ### 复用 Folme 参数对象
 
@@ -97,10 +127,10 @@ npm run emulator -- --device bandpro --once
 ### reset 时机
 
 - reset 早于最终棋盘 UI 提交：容易出现回弹或错位。
-- reset 延迟拉到 32ms：错字闪烁暴露时间变长。
-- 16ms 延迟：目前最接近真机基准体感。
+- 只使用一次 `vm.$nextTick()` 后延迟 32ms：当前全系列动画基线，位置回跳已消失；样式刷新产生的短暂闪烁属于正常刷新。
+- 嵌套两个 `vm.$nextTick()`：Band10 模拟器会在 JS 回调释放阶段触发 data abort。
 
-结论：先提交最终棋盘 UI，再延迟 16ms reset。
+结论：先提交最终棋盘 UI，再延迟 32ms reset；不要嵌套 `nextTick`。
 
 ## 后续优化原则
 
