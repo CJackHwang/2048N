@@ -69,12 +69,18 @@ function resolveRpk(customPath, packageName) {
 }
 
 function ensureVvdConfig(manager, device) {
+  let info = null
   try {
-    return manager.getVvdInfo(device)
+    info = manager.getVvdInfo(device)
   } catch (error) {
-    manager.resetImageDir(device)
-    return manager.getVvdInfo(device)
+    // 配置文件缺失时由 resetImageDir 统一恢复默认镜像路径。
   }
+  if (!info || !info.imageDir) {
+    manager.resetImageDir(device)
+    info = manager.getVvdInfo(device)
+  }
+  if (!info || !info.imageDir) throw new Error(`${device} 未找到可用 Vela 镜像`)
+  return info
 }
 
 function delay(ms) {
