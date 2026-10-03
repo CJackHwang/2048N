@@ -1060,7 +1060,8 @@
     left: 0;
     top: 0;
     width: 212px;
-    height: 520px;
+    /* 末行方块底部在 y369，缩小命中层避免遮住下方按钮。 */
+    height: 370px;
     padding-top: 0px;
     padding-left: 0px;
   }
