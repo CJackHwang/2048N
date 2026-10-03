@@ -106,6 +106,7 @@
   const outValues = [0, 0, 0, 0]
   const outFirstSources = [-1, -1, -1, -1]
   const outSecondSources = [-1, -1, -1, -1]
+  const emptyCellIds = new Array(16)
   const savePayload = {
       map: board,
       hs: 0,
@@ -557,29 +558,20 @@
       let emptyCount = 0
       for (let i = 0; i < 4; i++) {
           for (let j = 0; j < 4; j++) {
-              if (!board[i][j]) emptyCount++
+              if (!board[i][j]) emptyCellIds[emptyCount++] = i * 4 + j
           }
       }
       
       if (emptyCount === 0) return true
       
-      let targetEmpty = Math.floor(Math.random() * emptyCount)
-      let newValue = Math.random() > 0.5 ? 4 : 2
-      for (let i = 0; i < 4; i++) {
-          for (let j = 0; j < 4; j++) {
-              if (!board[i][j]) {
-                  if (targetEmpty === 0) {
-                      board[i][j] = newValue
-                      if (newValue > vm.maxTile) vm.maxTile = newValue
-                      if (newValue > vm.maxTileHistory) vm.maxTileHistory = newValue
-                      return emptyCount === 1
-                  }
-                  targetEmpty--
-              }
-          }
-      }
-      
-      return false
+      const targetId = emptyCellIds[Math.floor(Math.random() * emptyCount)]
+      const newValue = Math.random() > 0.5 ? 4 : 2
+      const row = Math.floor(targetId / 4)
+      const col = targetId % 4
+      board[row][col] = newValue
+      if (newValue > vm.maxTile) vm.maxTile = newValue
+      if (newValue > vm.maxTileHistory) vm.maxTileHistory = newValue
+      return emptyCount === 1
   }
   
   function mo(vm, dir) {
