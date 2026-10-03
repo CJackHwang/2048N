@@ -75,12 +75,11 @@ function queueAnimation(id1, id2) {
 | config | Object | 否 | 动画配置（仅delay有效） |
 
 #### 示例代码
-2048N 只取消并 reset 本轮实际移动过的格子，避免无意义的桥调用。
+2048N 只 reset 本轮实际移动过的格子，避免无意义的桥调用。
 ```javascript
 function clearani(ids) {
   const targets = ids && ids.length ? ids : CELL_IDS
   for (let i = 0; i < targets.length; i++) {
-    folme.cancel({ id: targets[i] })
     folme.setTo({
       id: targets[i],
       toState: { translateX: "0px", translateY: "0px" }
@@ -163,7 +162,7 @@ function cancelActiveAnimations(ids) {
 
 ```javascript
 const MOVE_DURATION = 110
-const RESET_TRANSFORM_DELAY = 16
+const RESET_TRANSFORM_DELAY = 32
 const ANIMATION_CONFIG = { duration: 0.1 }
 ```
 
@@ -174,10 +173,10 @@ const ANIMATION_CONFIG = { duration: 0.1 }
 3. 棋盘格间距使用固定常量计算，不在移动时调用 `getBoundingClientRect()`。
 4. 使用 `folme.startGroup()` 批量启动动画，降低 JS 到原生动画接口的调用次数。
 5. 内部动画槽位可以复用，但传给 Folme 的数组元素和 `toState` 必须创建一次性快照。
-6. 动画结束后提交最终棋盘数据，等待 `vm.$nextTick()` 完成 DOM 更新，再延迟 16ms reset transform。
+6. 动画结束后提交最终棋盘数据，等待 `vm.$nextTick()` 完成 DOM 更新，再延迟 32ms reset transform。
 7. reset 只处理本轮实际动过的格子；如果没有传入 id 列表，才 fallback 到 16 格全 reset。
 
-当前清理逻辑（先取消旧队列，再归零）：
+当前清理逻辑（`setTo()` 中断动画并直接回到基位）：
 
 ```javascript
 function clearani(ids) {

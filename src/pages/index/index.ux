@@ -89,8 +89,8 @@
   // Delay persistent writes until a short burst of moves has settled.
   // This keeps flash I/O and JSON allocation out of the active play path.
   const SAVE_DEBOUNCE = 800
-  // 等 Vela 完成数据对应的 DOM 更新后，再留一个渲染帧清理 Folme。
-  const RESET_TRANSFORM_DELAY = 16
+  // 等 Vela 完成 DOM 更新后，多留两个渲染帧再清理 Folme。
+  const RESET_TRANSFORM_DELAY = 32
   const GC_MIN_INTERVAL = 10000
   const TILE_PALETTE_VALUES = [0, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
   const CELL_IDS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
@@ -796,9 +796,7 @@
   function clearani(ids) {
       const targets = ids && ids.length ? ids : CELL_IDS
       for (let i = 0; i < targets.length; i++) {
-          // 真机 Folme 可能在 setTo 后仍完成上一条队列；先取消再归零，
-          // 避免旧动画回写源位置造成闪烁。
-          if (typeof folme.cancel === "function") folme.cancel({id: targets[i]})
+          // setTo 会直接中断当前动画并设为目标状态，不额外发 cancel。
           folme.setTo({
               id: targets[i],
               toState: {translateX: "0px", translateY: "0px"}
