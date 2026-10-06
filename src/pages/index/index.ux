@@ -1,5 +1,5 @@
 <template>
-    <div class="container {{ isRect ? 'rect-layout' : '' }}" @swipe="move">
+    <div class="container {{ isRect ? 'rect-layout' : (isSmallPill ? 'pill-small-layout' : '') }} {{ hydrated ? 'app-ready' : 'app-booting' }}" @swipe="move">
       <!--背景+按钮-->
       <div class="bg {{ dark ? 'bg-dark' : 'bg-light' }}">
         <img src="{{ dark ? '/common/bg2.png' : '/common/bg1.png' }}" class="bg-img {{ isRect ? 'rect-hide' : '' }}" />
@@ -83,6 +83,8 @@
   // 动画位移跟随棋盘行列坐标，避免每次移动读取布局尺寸。
   const MOVE_DURATION = 110
   const CELL_STEP_X = 48
+  const GAME_DATA_URI = 'internal://files/2048/game_data.json'
+  const MAX_SAFE_INTEGER = 9007199254740991
   const DEFAULT_CELL_ROW_OFFSETS = [0, 49, 98, 147]
   // Band9 bg1.png rows start at y=180, 228, 276, 325.
   const SMALL_PILL_CELL_ROW_OFFSETS = [0, 48, 96, 145]
@@ -92,8 +94,9 @@
   const SAVE_DEBOUNCE = 800
   // 等 Vela 完成一次 DOM 更新后，再延迟清理 Folme。
   const RESET_TRANSFORM_DELAY = 32
-  const ANIMATION_POLL_INTERVAL = 16
+  const ANIMATION_POLL_INTERVAL = 32
   const ANIMATION_MAX_WAIT = 320
+  const ANIMATION_RELEASE_FALLBACK = 96
   const GC_MIN_INTERVAL = 10000
   const TILE_PALETTE_VALUES = [0, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
   const CELL_IDS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
@@ -125,24 +128,28 @@
       maxTile: 2,
       maxTileHistory: 0
   }
-  const writeOptions = {
-      uri: 'internal://files/2048/game_data.json',
-      text: "",
-      success: () => {},
-      complete: () => {},
-      fail: () => {
-          saveDirty = true
-      }
-  }
   let animationTimer = null
+  let animationReleaseTimer = null
   let saveTimer = null
   let inputLocked = false
+  let animationSequence = 0
+  let activeAnimationSequence = 0
   let lastGarbageCollectionAt = 0
   let pendingAnimationCount = 0
   let activeAnimationIds = []
   let canUndo = 0
   let saveDirty = false
   let moveBackedUp = false
+  let pendingMoveScore = 0
+  let pendingMoveMaxMerged = 0
+  let activeMoveCommitted = false
+  let gameLoaded = false
+  let deviceLoaded = false
+  let activePage = null
+  let activeSession = 0
+  let sessionCounter = 0
+  let writeInProgress = false
+  let queuedWrite = null
   
   // 初始化数组
   for (let i = 0; i < 4; i++) {
@@ -204,6 +211,7 @@
           maxTile: 0,
           maxTileHistory: 0,
           dark: false,
+          hydrated: false,
           isRect: false,
           isSmallPill: false,
           menuFlag: false,
@@ -213,26 +221,53 @@
   
       onReady() {
           const vm = this
-          startNewGame(vm, false)
-          loadGame(vm)
+          const session = ++sessionCounter
+          activePage = vm
+          activeSession = session
+          gameLoaded = false
+          deviceLoaded = false
+          vm.hydrated = false
+          resetRuntimeState()
+          startNewGame(vm, false, true)
+          loadGame(vm, () => {
+              if (!isCurrentPage(vm, session)) return
+              gameLoaded = true
+              maybeShowApp(vm, session)
+          }, session)
           device.getInfo({
               success(info) {
+                  if (!isCurrentPage(vm, session)) return
                   vm.isRect = !!info && info.screenShape === "rect"
-                  const width = info ? info.screenWidth : 0
-                  vm.isSmallPill = width < 100 || (width >= 190 && width <= 194)
+                  const width = info && typeof info.screenWidth === "number" && isFinite(info.screenWidth)
+                      ? info.screenWidth
+                      : null
+                  vm.isSmallPill = width !== null && (width < 100 || (width >= 190 && width <= 194))
                   cellRowOffsets = vm.isSmallPill ? SMALL_PILL_CELL_ROW_OFFSETS : DEFAULT_CELL_ROW_OFFSETS
                   rm0(vm, board)
+                  deviceLoaded = true
+                  maybeShowApp(vm, session)
+              },
+              fail() {
+                  if (!isCurrentPage(vm, session)) return
+                  deviceLoaded = true
+                  maybeShowApp(vm, session)
+              },
+              complete() {
+                  if (!isCurrentPage(vm, session)) return
+                  deviceLoaded = true
+                  maybeShowApp(vm, session)
               }
           })
       },
   
       changeScoreMode() {
+          if (!this.hydrated) return
           this.scoreMode = !this.scoreMode
           this.save()
       },
   
       chcb() {
-          if (inputLocked) return
+          if (!this.hydrated || inputLocked) return
           if (canUndo == 1 && lm && lm[0]) {
               this.hsc = lhs || 0
               this.sco = ls || 0
@@ -243,9 +278,9 @@
                       board[i][j] = lm[i][j] || 0
                   }
               }
-  
+
               rm0(this, board)
-              over = 0
+              over = isGameOverBoard() ? 1 : 0
               syncMaxTile(this)
               canUndo = 0
               this.save()
@@ -258,13 +293,13 @@
       },
   
       new_game() {
-          if (inputLocked) return
+          if (!this.hydrated || inputLocked) return
           backup(this)
           startNewGame(this, true)
       },
   
       move(eve) {
-          if (inputLocked) return
+          if (!this.hydrated || inputLocked) return
           if (this.menuFlag) {
               if (eve.direction == "right") this.exit('e')
               return
@@ -304,21 +339,34 @@
       },
 
       onDestroy() {
+          if (activePage !== this) return
+          const settledMove = settleActiveMove(this)
           if (animationTimer) {
               clearTimeout(animationTimer)
               animationTimer = null
+          }
+          if (animationReleaseTimer) {
+              clearTimeout(animationReleaseTimer)
+              animationReleaseTimer = null
           }
           if (saveTimer) {
               clearTimeout(saveTimer)
               saveTimer = null
           }
-          if (saveDirty) this.writeGameData()
+          if (settledMove || saveDirty) this.save(true)
+          activePage = null
+          activeSession = 0
+          gameLoaded = false
+          deviceLoaded = false
+          this.hydrated = false
           inputLocked = false
           requestGarbageCollection()
       },
 
       onHide() {
-          if (saveDirty) this.save(true)
+          if (activePage !== this) return
+          const settledMove = settleActiveMove(this)
+          if (settledMove || saveDirty) this.save(true)
           requestGarbageCollection()
       },
 
@@ -335,10 +383,9 @@
           savePayload.scoreMode = this.scoreMode
           savePayload.maxTile = this.maxTile || 2
           savePayload.maxTileHistory = this.maxTileHistory || 0
-          writeOptions.text = JSON.stringify(savePayload)
+          const text = JSON.stringify(savePayload)
           saveDirty = false
-          
-          file.writeText(writeOptions)
+          enqueueGameWrite(this, text, activeSession)
       },
   
       exit(a) {
@@ -352,16 +399,19 @@
       },
   
       openMenu() {
+          if (!this.hydrated) return
           this.menuFlag = true
       },
   
       changeMode() {
+          if (!this.hydrated) return
           this.dark = !this.dark
           rm0(this, board)
           this.save()
       },
   
       changeAni() {
+          if (!this.hydrated) return
           this.ani = !this.ani
           this.save()
       },
@@ -373,18 +423,32 @@
   }
   
   // 辅助函数
-  function isValidBoard(value) {
+  function isValidTileValue(value) {
+      if (typeof value !== "number" || !isFinite(value) || value < 0 ||
+          value > MAX_SAFE_INTEGER || Math.floor(value) !== value) {
+          return false
+      }
+      if (value === 0) return true
+      if (value < 2) return false
+      while (value > 1) {
+          if (value % 2) return false
+          value /= 2
+      }
+      return true
+  }
+
+  function isValidBoard(value, requirePlayableBoard) {
       if (!Array.isArray(value) || value.length !== 4) return false
+      let tileCount = 0
       for (let i = 0; i < 4; i++) {
           if (!Array.isArray(value[i]) || value[i].length !== 4) return false
           for (let j = 0; j < 4; j++) {
               const cell = value[i][j]
-              if (typeof cell !== "number" || !isFinite(cell) || cell < 0 || Math.floor(cell) !== cell) {
-                  return false
-              }
+              if (!isValidTileValue(cell)) return false
+              if (cell) tileCount++
           }
       }
-      return true
+      return !requirePlayableBoard || tileCount >= 2
   }
 
   function copyBoard(target, source) {
@@ -396,25 +460,26 @@
   }
 
   function safeNumber(value) {
-      return typeof value === "number" && isFinite(value) && value >= 0 ? value : 0
+      return typeof value === "number" && isFinite(value) && value >= 0 &&
+          value <= MAX_SAFE_INTEGER && Math.floor(value) === value ? value : 0
   }
 
   function restoreGame(vm, text) {
       try {
           const saved = JSON.parse(text)
-          if (!saved || !isValidBoard(saved.map)) return false
+          if (!saved || !isValidBoard(saved.map, true)) return false
 
           copyBoard(board, saved.map)
           let hasUndoBoard = false
-          if (isValidBoard(saved.lm)) {
+          if (isValidBoard(saved.lm, true)) {
               copyBoard(lm, saved.lm)
               hasUndoBoard = true
           } else {
               clear(lm)
           }
 
-          vm.hsc = safeNumber(saved.hs)
           vm.sco = safeNumber(saved.sc)
+          vm.hsc = Math.max(safeNumber(saved.hs), vm.sco)
           canUndo = saved.ch === 1 && hasUndoBoard ? 1 : 0
           vm.dark = saved.dark === true
           vm.ani = saved.ani !== false
@@ -422,8 +487,9 @@
           vm.maxTile = safeNumber(saved.maxTile)
           vm.maxTileHistory = safeNumber(saved.maxTileHistory)
           ls = safeNumber(saved.ls)
-          lhs = safeNumber(saved.lhs)
+          lhs = Math.max(safeNumber(saved.lhs), ls)
           syncMaxTile(vm)
+          over = isGameOverBoard() ? 1 : 0
           rm0(vm, board)
           saveDirty = false
           return true
@@ -432,9 +498,15 @@
       }
   }
 
-  function startNewGame(vm, persist) {
+  function startNewGame(vm, persist, resetUndo) {
       over = 0
       clear(board)
+      if (resetUndo) {
+          clear(lm)
+          canUndo = 0
+          ls = 0
+          lhs = 0
+      }
 
       let pos1 = Math.floor(Math.random() * 16)
       let pos2
@@ -455,32 +527,126 @@
       if (persist) vm.save()
   }
 
-  function readGame(vm) {
+  function readGame(vm, onLoaded, session) {
+      let settled = false
+      const done = () => {
+          if (settled) return
+          settled = true
+          if (onLoaded) onLoaded()
+      }
       file.readText({
-          uri: writeOptions.uri,
+          uri: GAME_DATA_URI,
           success: (res) => {
-              if (!res.text || !restoreGame(vm, res.text)) vm.new_game()
+              if (!isCurrentPage(vm, session)) return
+              try {
+                  if (!res.text || !restoreGame(vm, res.text)) startNewGame(vm, true, true)
+              } finally {
+                  done()
+              }
           },
-          fail: () => vm.new_game(),
+          fail: () => {
+              if (!isCurrentPage(vm, session)) return
+              try {
+                  startNewGame(vm, true, true)
+              } finally {
+                  done()
+              }
+          },
           complete: () => {}
       })
   }
 
-  function loadGame(vm) {
+  function loadGame(vm, onLoaded, session) {
       file.access({
           uri: 'internal://files/2048',
-          success: () => readGame(vm),
+          success: () => {
+              if (isCurrentPage(vm, session)) readGame(vm, onLoaded, session)
+          },
           fail: () => {
+              if (!isCurrentPage(vm, session)) return
               file.mkdir({
                   uri: 'internal://files/2048',
-                  success: () => readGame(vm),
+                  success: () => readGame(vm, onLoaded, session),
                   // The directory may have appeared between access and mkdir.
-                  fail: () => readGame(vm),
+                  fail: () => readGame(vm, onLoaded, session),
                   complete: () => {}
               })
           },
           complete: () => {}
       })
+  }
+
+  function maybeShowApp(vm, session) {
+      if (gameLoaded && deviceLoaded && isCurrentPage(vm, session)) vm.hydrated = true
+  }
+
+  function isCurrentPage(vm, session) {
+      return activePage === vm && activeSession === session && vm.$valid !== false
+  }
+
+  function resetRuntimeState() {
+      if (animationTimer) {
+          clearTimeout(animationTimer)
+          animationTimer = null
+      }
+      if (animationReleaseTimer) {
+          clearTimeout(animationReleaseTimer)
+          animationReleaseTimer = null
+      }
+      if (saveTimer) {
+          clearTimeout(saveTimer)
+          saveTimer = null
+      }
+      over = 0
+      canUndo = 0
+      ls = 0
+      lhs = 0
+      clear(lm)
+      pendingAnimationCount = 0
+      activeAnimationIds.length = 0
+      pendingMoveScore = 0
+      pendingMoveMaxMerged = 0
+      activeAnimationSequence = 0
+      activeMoveCommitted = false
+      inputLocked = false
+      saveDirty = false
+  }
+
+  function enqueueGameWrite(vm, text, session) {
+      const snapshot = {vm: vm, text: text, session: session}
+      if (writeInProgress) {
+          queuedWrite = snapshot
+          return
+      }
+      startGameWrite(snapshot)
+  }
+
+  function startGameWrite(snapshot) {
+      writeInProgress = true
+      let settled = false
+      const finish = (failed) => {
+          if (settled) return
+          settled = true
+          writeInProgress = false
+          const hasNewerWrite = queuedWrite !== null
+          if (failed && !hasNewerWrite && isCurrentPage(snapshot.vm, snapshot.session)) {
+              saveDirty = true
+          }
+          const next = queuedWrite
+          queuedWrite = null
+          if (next) startGameWrite(next)
+      }
+      try {
+          file.writeText({
+              uri: GAME_DATA_URI,
+              text: snapshot.text,
+              success: () => finish(false),
+              fail: () => finish(true),
+              complete: () => finish(false)
+          })
+      } catch (err) {
+          finish(true)
+      }
   }
 
   function backup(vm, markUndo) {
@@ -584,6 +750,9 @@
       pendingAnimationCount = 0
       activeAnimationIds.length = 0
       moveBackedUp = false
+      pendingMoveScore = 0
+      pendingMoveMaxMerged = 0
+      activeMoveCommitted = false
   
       switch (dir) {
           case "left":
@@ -601,6 +770,9 @@
       }
   
       if (moved) {
+          if (pendingMoveScore) {
+              applyScoreDelta(vm, pendingMoveScore, pendingMoveMaxMerged)
+          }
           canUndo = 1
           if (vm.ani) {
               // Ignore extra swipes until the frame has committed.  Without
@@ -608,14 +780,24 @@
               inputLocked = true
               const animationIds = activeAnimationIds.slice()
               const animationStartedAt = Date.now()
-              startAnimations()
-              animationTimer = setTimeout(() => {
-                  finishAnimatedMove(vm, animationIds, animationStartedAt)
-              }, MOVE_DURATION)
+              const sequence = ++animationSequence
+              activeAnimationSequence = sequence
+              if (!startAnimations()) {
+                  activeAnimationSequence = 0
+                  clearani(animationIds)
+                  try {
+                      commitMove(vm)
+                  } finally {
+                      activeMoveCommitted = false
+                      inputLocked = false
+                  }
+              } else {
+                  animationTimer = setTimeout(() => {
+                      finishAnimatedMove(vm, animationIds, animationStartedAt, sequence)
+                  }, MOVE_DURATION)
+              }
           } else {
-              if (newblock(vm)) checkGameOver()
-              rm0(vm, board)
-              vm.save()
+              commitMove(vm)
           }
       }
   
@@ -721,7 +903,8 @@
       }
 
       if (scoreAdd) {
-          applyScoreDelta(vm, scoreAdd, maxMerged)
+          pendingMoveScore += scoreAdd
+          if (maxMerged > pendingMoveMaxMerged) pendingMoveMaxMerged = maxMerged
       }
 
       return true
@@ -750,112 +933,205 @@
   }
   
   function startAnimations() {
-      if (!pendingAnimationCount) return
+      if (!pendingAnimationCount) return true
       if (typeof folme.startGroup === "function") {
-          const animationFrame = new Array(pendingAnimationCount)
+          try {
+              const animationFrame = new Array(pendingAnimationCount)
+              for (let i = 0; i < pendingAnimationCount; i++) {
+                  const frame = animationFrames[i]
+                  animationFrame[i] = {
+                      id: frame.id,
+                      toState: {translateX: frame.translateX, translateY: frame.translateY},
+                      config: ANIMATION_CONFIG
+                  }
+              }
+              folme.startGroup(animationFrame)
+              return true
+          } catch (err) {
+              return false
+          }
+      }
+      try {
           for (let i = 0; i < pendingAnimationCount; i++) {
               const frame = animationFrames[i]
-              animationFrame[i] = {
+              folme.fromTo({
                   id: frame.id,
+                  fromState: {translateX: "0px", translateY: "0px"},
                   toState: {translateX: frame.translateX, translateY: frame.translateY},
                   config: ANIMATION_CONFIG
-              }
+              })
           }
-          folme.startGroup(animationFrame)
-          return
-      }
-      for (let i = 0; i < pendingAnimationCount; i++) {
-          const frame = animationFrames[i]
-          folme.fromTo({
-              id: frame.id,
-              fromState: {translateX: "0px", translateY: "0px"},
-              toState: {translateX: frame.translateX, translateY: frame.translateY},
-              config: ANIMATION_CONFIG
-          })
+          return true
+      } catch (err) {
+          return false
       }
   }
 
-  function folmeAnimationsFinished(ids) {
-      if (typeof folme.getState !== "function") return true
+  function findRunningAnimation(ids) {
+      if (!ids.length || typeof folme.getState !== "function") return null
       for (let i = 0; i < ids.length; i++) {
           try {
               const state = folme.getState({id: ids[i], attr: "translateX"})
-              if (state && state.isFinished === false) return false
+              if (state && state.isFinished === false) return ids[i]
           } catch (err) {
-              return true
+              return null
           }
       }
-      return true
+      return null
   }
 
-  function finishAnimatedMove(vm, ids, startedAt) {
+  function folmeAnimationRunning(id) {
+      if (!id || typeof folme.getState !== "function") return false
+      try {
+          const state = folme.getState({id: id, attr: "translateX"})
+          return !!state && state.isFinished === false
+      } catch (err) {
+          return false
+      }
+  }
+
+  function finishAnimatedMove(vm, ids, startedAt, sequence, watchId) {
+      if (sequence !== activeAnimationSequence) return
       const elapsed = Date.now() - startedAt
-      if (elapsed < MOVE_DURATION ||
-          (!folmeAnimationsFinished(ids) && elapsed < ANIMATION_MAX_WAIT)) {
+      let nextWatchId = watchId
+      if (elapsed < MOVE_DURATION) {
           animationTimer = setTimeout(() => {
-              finishAnimatedMove(vm, ids, startedAt)
+              finishAnimatedMove(vm, ids, startedAt, sequence, nextWatchId)
           }, ANIMATION_POLL_INTERVAL)
           return
+      }
+      if (elapsed < ANIMATION_MAX_WAIT) {
+          if (!nextWatchId || !folmeAnimationRunning(nextWatchId)) {
+              nextWatchId = findRunningAnimation(ids)
+          }
+          if (nextWatchId) {
+              animationTimer = setTimeout(() => {
+                  finishAnimatedMove(vm, ids, startedAt, sequence, nextWatchId)
+              }, ANIMATION_POLL_INTERVAL)
+              return
+          }
       }
 
       animationTimer = null
       if (!vm.$valid) {
-          inputLocked = false
+          releaseAnimatedMove(vm, ids, sequence)
           return
       }
-      if (newblock(vm)) checkGameOver()
-      rm0(vm, board)
-      vm.$nextTick(() => {
-          if (!vm.$valid) {
-              inputLocked = false
-              return
+      try {
+          commitMove(vm, false)
+          activeMoveCommitted = true
+      } catch (err) {
+          releaseAnimatedMove(vm, ids, sequence)
+          return
+      }
+      scheduleAnimationRelease(vm, ids, sequence)
+  }
+
+  function scheduleAnimationRelease(vm, ids, sequence) {
+      animationReleaseTimer = setTimeout(() => {
+          releaseAnimatedMove(vm, ids, sequence)
+      }, RESET_TRANSFORM_DELAY + ANIMATION_RELEASE_FALLBACK)
+      try {
+          if (typeof vm.$nextTick !== "function") return
+          vm.$nextTick(() => {
+              if (sequence !== activeAnimationSequence) return
+              if (animationReleaseTimer) clearTimeout(animationReleaseTimer)
+              animationReleaseTimer = setTimeout(() => {
+                  releaseAnimatedMove(vm, ids, sequence)
+              }, RESET_TRANSFORM_DELAY)
+          })
+      } catch (err) {
+          releaseAnimatedMove(vm, ids, sequence)
+      }
+  }
+
+  function releaseAnimatedMove(vm, ids, sequence) {
+      if (sequence !== activeAnimationSequence) return
+      activeAnimationSequence = 0
+      activeMoveCommitted = false
+      if (animationReleaseTimer) {
+          clearTimeout(animationReleaseTimer)
+          animationReleaseTimer = null
+      }
+      try {
+          clearani(ids)
+      } finally {
+          inputLocked = false
+          if (vm.$valid !== false) vm.save()
+          else saveDirty = true
+      }
+  }
+
+  function settleActiveMove(vm) {
+      if (!activeAnimationSequence) return false
+      if (animationTimer) {
+          clearTimeout(animationTimer)
+          animationTimer = null
+      }
+      if (animationReleaseTimer) {
+          clearTimeout(animationReleaseTimer)
+          animationReleaseTimer = null
+      }
+      try {
+          if (!activeMoveCommitted) {
+              commitMove(vm, false)
+              activeMoveCommitted = true
           }
-          animationTimer = setTimeout(() => {
-              animationTimer = null
-              if (!vm.$valid) {
-                  inputLocked = false
-                  return
-              }
-              clearani(ids)
-              inputLocked = false
-              vm.save()
-          }, RESET_TRANSFORM_DELAY)
-      })
+      } catch (err) {
+          saveDirty = true
+      }
+      activeAnimationSequence = 0
+      activeMoveCommitted = false
+      try {
+          clearani(activeAnimationIds)
+      } finally {
+          inputLocked = false
+      }
+      return true
   }
 
   function clearani(ids) {
       const targets = ids && ids.length ? ids : CELL_IDS
       for (let i = 0; i < targets.length; i++) {
           // setTo 会直接中断当前动画并设为目标状态，不额外发 cancel。
-          folme.setTo({
-              id: targets[i],
-              toState: {translateX: "0px", translateY: "0px"}
-          })
+          try {
+              folme.setTo({
+                  id: targets[i],
+                  toState: {translateX: "0px", translateY: "0px"}
+              })
+          } catch (err) {
+              // 老版本运行时清理某个已回收节点时，不能阻塞输入解锁。
+          }
       }
   }
+
+  function commitMove(vm, persist) {
+      if (newblock(vm)) checkGameOver()
+      rm0(vm, board)
+      if (persist !== false) vm.save()
+  }
   
-  function checkGameOver() {
-      // 检查是否有可合并的相邻方块
+  function isGameOverBoard() {
       for (let i = 0; i < 4; i++) {
           for (let j = 0; j < 4; j++) {
               const current = board[i][j]
-              if (!current) continue
-  
-              // 检查右侧
-              if (j < 3 && board[i][j + 1] === current) {
-                  over = 0
-                  return
-              }
-  
-              // 检查下方
-              if (i < 3 && board[i + 1][j] === current) {
-                  over = 0
-                  return
-              }
+              if (!current) return false
+
+              if (j < 3 && board[i][j + 1] === current) return false
+
+              if (i < 3 && board[i + 1][j] === current) return false
           }
       }
-  
-      // 如果没有空格子且没有可合并的方块，游戏结束
+
+      return true
+  }
+
+  function checkGameOver() {
+      if (!isGameOverBoard()) {
+          over = 0
+          return
+      }
+
       over = 1
       prompt.showToast({
           message: "Game Over!",
@@ -868,11 +1144,15 @@
   .container {
     position: relative;
     width: 212px;
-    /* 540设计像素按环9屏幕宽度缩放后覆盖490像素屏高。 */
-    height: 540px;
+    /* Band10/11 为 212×520；Band9 通过小屏布局保留 540 设计高并按宽度缩放。 */
+    height: 520px;
   }
 
+  .app-booting { opacity: 0; }
+  .app-ready { opacity: 1; }
+
   .rect-layout { height: 303px; }
+  .pill-small-layout { height: 540px; }
   
   .bg {
     position: absolute;

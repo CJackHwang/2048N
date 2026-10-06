@@ -163,7 +163,7 @@ function cancelActiveAnimations(ids) {
 ```javascript
 const MOVE_DURATION = 110
 const RESET_TRANSFORM_DELAY = 32
-const ANIMATION_POLL_INTERVAL = 16
+const ANIMATION_POLL_INTERVAL = 32
 const ANIMATION_MAX_WAIT = 320
 const ANIMATION_CONFIG = { duration: 0.1 }
 ```
@@ -175,7 +175,7 @@ const ANIMATION_CONFIG = { duration: 0.1 }
 3. 棋盘格间距使用固定常量计算，不在移动时调用 `getBoundingClientRect()`。
 4. 使用 `folme.startGroup()` 批量启动动画，降低 JS 到原生动画接口的调用次数。
 5. 内部动画槽位可以复用，但传给 Folme 的数组元素和 `toState` 必须创建一次性快照。
-6. 至少经过 `MOVE_DURATION` 后，通过 `getState()` 确认本轮移动方块完成；接口不可用时回退到固定时长，并限制最长等待 320ms。
+6. 至少经过 `MOVE_DURATION` 后，通过 `getState()` 确认本轮移动方块完成；接口不可用时回退到固定时长。`ANIMATION_MAX_WAIT = 320` 是轮询阈值，不是严格截止时间：按 32ms 轮询时，提交通常会在约 320–352ms 间发生，事件循环繁忙时还可能更晚。
 7. 提交最终棋盘数据后等待一次 `vm.$nextTick()`，再延迟 32ms reset transform，避免移动方块在文字落位前回到源位置；避免嵌套 nextTick 触发模拟器运行时释放异常。
 8. reset 只处理本轮实际动过的格子；如果没有传入 id 列表，才 fallback 到 16 格全 reset。
 
@@ -185,10 +185,14 @@ const ANIMATION_CONFIG = { duration: 0.1 }
 function clearani(ids) {
   const targets = ids && ids.length ? ids : CELL_IDS
   for (let i = 0; i < targets.length; i++) {
-    folme.setTo({
-      id: targets[i],
-      toState: { translateX: "0px", translateY: "0px" }
-    })
+    try {
+      folme.setTo({
+        id: targets[i],
+        toState: { translateX: "0px", translateY: "0px" }
+      })
+    } catch (err) {
+      // 老运行时回收节点后可能拒绝 setTo，不能阻塞输入解锁。
+    }
   }
 }
 ```
@@ -197,28 +201,37 @@ function clearani(ids) {
 
 ```javascript
 function startAnimations() {
-  if (!pendingAnimationCount) return
+  if (!pendingAnimationCount) return true
   if (typeof folme.startGroup === "function") {
-    const animationFrame = new Array(pendingAnimationCount)
+    try {
+      const animationFrame = new Array(pendingAnimationCount)
+      for (let i = 0; i < pendingAnimationCount; i++) {
+        const frame = animationFrames[i]
+        animationFrame[i] = {
+          id: frame.id,
+          toState: { translateX: frame.translateX, translateY: frame.translateY },
+          config: ANIMATION_CONFIG
+        }
+      }
+      folme.startGroup(animationFrame)
+      return true
+    } catch (err) {
+      return false
+    }
+  }
+  try {
     for (let i = 0; i < pendingAnimationCount; i++) {
       const frame = animationFrames[i]
-      animationFrame[i] = {
+      folme.fromTo({
         id: frame.id,
+        fromState: { translateX: "0px", translateY: "0px" },
         toState: { translateX: frame.translateX, translateY: frame.translateY },
         config: ANIMATION_CONFIG
-      }
+      })
     }
-    folme.startGroup(animationFrame)
-    return
-  }
-  for (let i = 0; i < pendingAnimationCount; i++) {
-    const frame = animationFrames[i]
-    folme.fromTo({
-      id: frame.id,
-      fromState: { translateX: "0px", translateY: "0px" },
-      toState: { translateX: frame.translateX, translateY: frame.translateY },
-      config: ANIMATION_CONFIG
-    })
+    return true
+  } catch (err) {
+    return false
   }
 }
 ```

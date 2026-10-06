@@ -1,10 +1,10 @@
 {
   "name": "2048N",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "由上游进行二开的深度性能优化与拓展完善版本",
   "license": "AGPL-3.0-only",
   "engines": {
-    "node": ">=8.10"
+    "node": ">=20.19.0"
   },
   "scripts": {
     "start": "aiot start --watch",
@@ -12,6 +12,7 @@
     "build:compat": "aiot release",
     "build:debug": "aiot build",
     "release": "aiot release --enable-jsc",
+    "test": "node --test test/*.test.cjs",
     "emulator": "node scripts/vela-emulator.js",
     "lint": "eslint --format codeframe --fix --ext .ux,.js src/"
   },
@@ -28,7 +29,7 @@
     ]
   },
   "devDependencies": {
-    "@aiot-toolkit/jsc": "^1.0.8",
+    "@aiot-toolkit/jsc": "^1.0.9",
     "aiot-toolkit": "^2.0.5"
   }
 }

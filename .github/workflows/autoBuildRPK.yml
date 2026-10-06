@@ -30,7 +30,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 20.x
+          node-version: 20.19.0
           cache: 'npm'
 
       # 3. 安装依赖并验证aiot工具链
