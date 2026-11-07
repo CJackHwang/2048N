@@ -1,16 +1,16 @@
 <template>
-    <div class="container {{ isRect ? 'rect-layout' : (isSmallPill ? 'pill-small-layout' : '') }} {{ hydrated ? 'app-ready' : 'app-booting' }}" @swipe="move">
+    <div class="container {{ isRect ? 'rect-layout' : (isSmallPill ? 'pill-small-layout' : '') }} {{ isWatchRect ? 'watch-layout' : '' }} {{ hydrated ? 'app-ready' : 'app-booting' }}" @swipe="move">
       <!--背景+按钮-->
       <div class="bg {{ dark ? 'bg-dark' : 'bg-light' }}">
         <img src="{{ dark ? '/common/bg2.png' : '/common/bg1.png' }}" class="bg-img {{ isRect ? 'rect-hide' : '' }}" />
-        <img class="btn-reset {{ isRect ? 'rect-reset' : '' }}" src="{{ dark ? '/common/reset_b.png' : '/common/reset.png' }}" @click="new_game" />
-        <img class="btn-undo {{ isRect ? 'rect-undo' : '' }}" src="{{ dark ? '/common/undo_b.png' : '/common/undo.png' }}" @click="chcb" />
-        <img class="btn-info {{ isRect ? 'rect-info' : '' }}" src="{{ dark ? '/common/info_b.png' : '/common/info.png' }}" @click="openMenu()" />
+        <img class="btn-reset {{ isRect ? 'rect-reset' : '' }} {{ isWatchRect ? 'watch-reset' : '' }}" src="{{ dark ? '/common/reset_b.png' : '/common/reset.png' }}" @click="new_game" />
+        <img class="btn-undo {{ isRect ? 'rect-undo' : '' }} {{ isWatchRect ? 'watch-undo' : '' }}" src="{{ dark ? '/common/undo_b.png' : '/common/undo.png' }}" @click="chcb" />
+        <img class="btn-info {{ isRect ? 'rect-info' : '' }} {{ isWatchRect ? 'watch-info' : '' }}" src="{{ dark ? '/common/info_b.png' : '/common/info.png' }}" @click="openMenu()" />
       </div>
   
       <!--游戏区域-->
-      <div class="game-board {{ dark ? 'game-board-dark' : 'game-board-light' }} {{ isRect ? (dark ? 'rect-board-dark' : 'rect-board-light') : '' }} {{ isSmallPill ? 'pill-small-board' : '' }}">
-        <img if="{{ isRect }}" class="rect-grid" src="{{ dark ? '/common/rect-grid-dark.png' : '/common/rect-grid-light.png' }}" />
+      <div class="game-board {{ dark ? 'game-board-dark' : 'game-board-light' }} {{ isRect ? (dark ? 'rect-board-dark' : 'rect-board-light') : '' }} {{ isSmallPill ? 'pill-small-board' : '' }} {{ isWatchRect ? 'watch-board' : '' }}">
+        <img if="{{ isRect }}" class="rect-grid {{ isWatchRect ? 'watch-grid' : '' }}" src="{{ dark ? (isWatchRect ? '/common/watch-grid-dark.png' : '/common/rect-grid-dark.png') : (isWatchRect ? '/common/watch-grid-light.png' : '/common/rect-grid-light.png') }}" />
         <!-- 固定16格，避免 Band10 的 Vela 运行时漏刷循环模板里的动态索引。 -->
         <text class="{{ tileClass0 }}" id="0">{{ md0 }}</text>
         <text class="{{ tileClass1 }}" id="1">{{ md1 }}</text>
@@ -31,8 +31,8 @@
       </div>
   
       <!--分数显示-->
-      <text class="score {{ isRect ? 'rect-score' : '' }} {{ isSmallPill ? 'pill-small-score' : '' }}">最高 {{ scoreMode ? hsc : maxTileHistory }}</text>
-      <text class="current-score {{ isRect ? 'rect-current-score' : '' }} {{ isSmallPill ? 'pill-small-current-score' : '' }}">当前 {{ scoreMode ? sco : maxTile }}</text>
+      <text class="score {{ isRect ? 'rect-score' : '' }} {{ isSmallPill ? 'pill-small-score' : '' }} {{ isWatchRect ? 'watch-score' : '' }}">最高 {{ scoreMode ? hsc : maxTileHistory }}</text>
+      <text class="current-score {{ isRect ? 'rect-current-score' : '' }} {{ isSmallPill ? 'pill-small-current-score' : '' }} {{ isWatchRect ? 'watch-current-score' : '' }}">当前 {{ scoreMode ? sco : maxTile }}</text>
   
       <!--关于菜单-->
       <div class="menu-overlay" if="{{ menuFlag }}">
@@ -61,7 +61,7 @@
   
       <!--返回按钮-->
       <img
-        class="btn-back {{ isRect ? 'rect-back' : '' }}"
+        class="btn-back {{ isRect ? 'rect-back' : '' }} {{ isWatchRect ? 'watch-back' : '' }}"
         src="{{ dark||menuFlag ? '/common/back_b.png' : '/common/back.png' }}"
         @click="exit('e')"
       />
@@ -88,7 +88,11 @@
   const DEFAULT_CELL_ROW_OFFSETS = [0, 49, 98, 147]
   // Band9 bg1.png rows start at y=180, 228, 276, 325.
   const SMALL_PILL_CELL_ROW_OFFSETS = [0, 48, 96, 145]
+  // 红米手表6 (432×514) watch-rect 棋盘：格子 41，行列间距 45。
+  const WATCH_CELL_ROW_OFFSETS = [0, 45, 90, 135]
+  const WATCH_CELL_STEP_X = 45
   let cellRowOffsets = DEFAULT_CELL_ROW_OFFSETS
+  let cellStepX = CELL_STEP_X
   // Delay persistent writes until a short burst of moves has settled.
   // This keeps flash I/O and JSON allocation out of the active play path.
   const SAVE_DEBOUNCE = 800
@@ -104,6 +108,8 @@
   const DARK_TILE_CLASSES = {}
   const SMALL_PILL_LIGHT_TILE_CLASSES = {}
   const SMALL_PILL_DARK_TILE_CLASSES = {}
+  const WATCH_LIGHT_TILE_CLASSES = {}
+  const WATCH_DARK_TILE_CLASSES = {}
   const CELL_TEXT_KEYS = Array(16)
   const CELL_CLASS_KEYS = Array(16)
   const ANIMATION_CONFIG = {duration: 0.1}
@@ -186,6 +192,15 @@
       }
       SMALL_PILL_LIGHT_TILE_CLASSES[value] = lightSmallClasses
       SMALL_PILL_DARK_TILE_CLASSES[value] = darkSmallClasses
+      const lightWatchClasses = []
+      const darkWatchClasses = []
+      for (let cell = 0; cell < 16; cell++) {
+          const positionClass = " watch-square watch-col-" + (cell % 4) + " watch-row-" + Math.floor(cell / 4)
+          lightWatchClasses[cell] = lightClass + positionClass
+          darkWatchClasses[cell] = darkClass + positionClass
+      }
+      WATCH_LIGHT_TILE_CLASSES[value] = lightWatchClasses
+      WATCH_DARK_TILE_CLASSES[value] = darkWatchClasses
   }
 
   export default {
@@ -214,6 +229,7 @@
           hydrated: false,
           isRect: false,
           isSmallPill: false,
+          isWatchRect: false,
           menuFlag: false,
           ani: true,
           scoreMode: true
@@ -241,8 +257,17 @@
                   const width = info && typeof info.screenWidth === "number" && isFinite(info.screenWidth)
                       ? info.screenWidth
                       : null
-                  vm.isSmallPill = width !== null && (width < 100 || (width >= 190 && width <= 194))
-                  cellRowOffsets = vm.isSmallPill ? SMALL_PILL_CELL_ROW_OFFSETS : DEFAULT_CELL_ROW_OFFSETS
+                  const height = info && typeof info.screenHeight === "number" && isFinite(info.screenHeight)
+                      ? info.screenHeight
+                      : null
+                  // 红米手表6 等 400+ 宽的竖向矩形屏走 watch-rect 布局（432×514）。
+                  vm.isWatchRect = width !== null && width >= 400 && (height === null || height > width)
+                  if (vm.isWatchRect) vm.isRect = true
+                  vm.isSmallPill = !vm.isWatchRect && width !== null && (width < 100 || (width >= 190 && width <= 194))
+                  cellRowOffsets = vm.isWatchRect
+                      ? WATCH_CELL_ROW_OFFSETS
+                      : (vm.isSmallPill ? SMALL_PILL_CELL_ROW_OFFSETS : DEFAULT_CELL_ROW_OFFSETS)
+                  cellStepX = vm.isWatchRect ? WATCH_CELL_STEP_X : CELL_STEP_X
                   rm0(vm, board)
                   deviceLoaded = true
                   maybeShowApp(vm, session)
@@ -670,7 +695,10 @@
   function rm0(vm, sm) {
       let a = 0
       const tileClasses = vm.dark ? DARK_TILE_CLASSES : LIGHT_TILE_CLASSES
-      const smallPillTileClasses = vm.isSmallPill
+      const watchTileClasses = vm.isWatchRect
+          ? (vm.dark ? WATCH_DARK_TILE_CLASSES : WATCH_LIGHT_TILE_CLASSES)
+          : null
+      const smallPillTileClasses = !vm.isWatchRect && vm.isSmallPill
           ? (vm.dark ? SMALL_PILL_DARK_TILE_CLASSES : SMALL_PILL_LIGHT_TILE_CLASSES)
           : null
       for (let i = 0; i < 4; i++) {
@@ -679,10 +707,16 @@
               const text = value || ""
               const paletteValue = value > 65536 ? 65536 : value
               const cachedSmallPillClasses = smallPillTileClasses && smallPillTileClasses[paletteValue]
-              let tileClass = cachedSmallPillClasses
-                  ? cachedSmallPillClasses[a]
-                  : (tileClasses[paletteValue] || ("square tile-" + (vm.dark ? "dark-" : "light-") + paletteValue))
-              if (vm.isSmallPill && !cachedSmallPillClasses) {
+              const cachedWatchClasses = watchTileClasses && watchTileClasses[paletteValue]
+              let tileClass = cachedWatchClasses
+                  ? cachedWatchClasses[a]
+                  : cachedSmallPillClasses
+                      ? cachedSmallPillClasses[a]
+                      : (tileClasses[paletteValue] || ("square tile-" + (vm.dark ? "dark-" : "light-") + paletteValue))
+              if (vm.isWatchRect && !cachedWatchClasses) {
+                  tileClass += " watch-square watch-col-" + (a % 4) + " watch-row-" + Math.floor(a / 4)
+              }
+              if (!vm.isWatchRect && vm.isSmallPill && !cachedSmallPillClasses) {
                   tileClass += " pill-small-square pill-small-col-" + (a % 4) + " pill-small-row-" + Math.floor(a / 4)
               }
               const textKey = CELL_TEXT_KEYS[a]
@@ -918,7 +952,7 @@
   }
 
   function queueAnimation(id1, id2) {
-      const dx = (id2 % 4 - id1 % 4) * CELL_STEP_X
+      const dx = (id2 % 4 - id1 % 4) * cellStepX
       const sourceRow = Math.floor(id1 / 4)
       const targetRow = Math.floor(id2 / 4)
       const dy = cellRowOffsets[targetRow] - cellRowOffsets[sourceRow]
@@ -1419,4 +1453,53 @@
   .pill-small-row-3 { top: 325px; }
   .pill-small-score { top: 82px; font-size: 26px; }
   .pill-small-current-score { top: 114px; font-size: 26px; }
+
+  /* 红米手表6 (432×514 矩形屏)：designWidth 212 下有效高 252，棋盘 180×180、格子 41、行列间距 45。 */
+  .watch-layout { height: 252px; }
+  .watch-board {
+    left: 16px;
+    top: 32px;
+    width: 180px;
+    height: 180px;
+    padding-top: 0px;
+    padding-left: 0px;
+    border-radius: 16px;
+  }
+  .watch-grid {
+    width: 180px;
+    height: 180px;
+  }
+  .watch-square {
+    position: absolute;
+    margin-top: 0px;
+    margin-left: 0px;
+    width: 41px;
+    height: 41px;
+    border-radius: 11px;
+    font-size: 13px;
+  }
+  .watch-col-0 { left: 2px; }
+  .watch-col-1 { left: 47px; }
+  .watch-col-2 { left: 92px; }
+  .watch-col-3 { left: 137px; }
+  .watch-row-0 { top: 2px; }
+  .watch-row-1 { top: 47px; }
+  .watch-row-2 { top: 92px; }
+  .watch-row-3 { top: 137px; }
+  .watch-score {
+    left: 44px;
+    top: 4px;
+    width: 76px;
+    font-size: 13px;
+  }
+  .watch-current-score {
+    left: 122px;
+    top: 4px;
+    width: 84px;
+    font-size: 13px;
+  }
+  .watch-reset { left: 10px; top: 214px; width: 48px; height: 34px; }
+  .watch-undo { left: 82px; top: 214px; width: 48px; height: 34px; }
+  .watch-info { left: 154px; top: 214px; width: 48px; height: 34px; }
+  .watch-back { left: 8px; top: 3px; width: 36px; height: 26px; }
   </style>

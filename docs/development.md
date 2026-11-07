@@ -1,15 +1,16 @@
 # 2048N 开发记录
 
-本文记录 2048N 对小米手环 9、9 Pro、10、10 Pro、11 的适配约定。9 与 10/11 共用胶囊屏方案并按屏幕尺寸区分，10 与 11 的屏幕布局相同；9 Pro 与 10 Pro 共用矩形屏方案。Band9、Band10、BandPro 已在 Vela 5 模拟器完成命令行启动验证，Band11 与 10 共用布局但仍需真机验收。后续开发优先参考这里，不要只按桌面浏览器或模拟器直觉改动画。
+本文记录 2048N 对小米手环 9、9 Pro、10、10 Pro、11 与红米手表6（Redmi Watch 6）的适配约定。9 与 10/11 共用胶囊屏方案并按屏幕尺寸区分，10 与 11 的屏幕布局相同；9 Pro 与 10 Pro 共用矩形屏方案（BandPro 布局）；红米手表6（432×514）等宽 400+ 的竖向矩形屏走独立的 watch-rect 布局。Band9、Band10、BandPro 已在 Vela 5 模拟器完成命令行启动验证，Band11 与 10 共用布局但仍需真机验收；红米手表6 布局通过逻辑测试与 VM 冒烟验证，需真机验收。后续开发优先参考这里，不要只按桌面浏览器或模拟器直觉改动画。
 
 ## 最佳实践
 
 1. 构建配置
    - `npm run build` 默认执行 `aiot release --enable-jsc`，不启用 Protobuf 二进制模板。
+   - release 打包需要项目内 `sign/release/` 下的 `private.pem` + `certificate.pem`；当前使用 aiot-toolkit 自带开发证书，供个人侧载安装。上架或更换开发者账号时替换为自己的证书。
    - `npm run build:compat` 生成不含 JSC 的兼容包；只有目标设备运行时不支持 JSC 时才使用。
    - `npm run build:debug` 才生成 debug 包。
    - `manifest.config.logLevel` 设为 `off`。
-   - `designWidth` 以 212 作为胶囊屏基准；`system.device.getInfo()` 用屏宽区分 Band9 与 Band10/11 的胶囊屏布局、用屏幕形状重排 Band9 Pro/10 Pro 矩形屏。Band9 棋盘与移动动画按背景素材逐行对齐，操作区沿用随屏宽缩放的原始位置；Pro 使用居中棋盘和等尺寸底部按钮。
+   - `designWidth` 以 212 作为胶囊屏基准；`system.device.getInfo()` 用屏宽区分 Band9 与 Band10/11 的胶囊屏布局、用屏幕形状重排 Band9 Pro/10 Pro 矩形屏。Band9 棋盘与移动动画按背景素材逐行对齐，操作区沿用随屏宽缩放的原始位置；Pro 使用居中棋盘和等尺寸底部按钮。宽 400+ 且高大于宽的矩形屏（红米手表6，432×514）走 watch-rect 布局，行列间距 45、动画步长 `WATCH_CELL_STEP_X`。
    - 移除未使用的 `system.router` feature，保留页面 router 配置。
 2. 响应式状态
    - 不直接驱动 UI 的状态移出页面 `private`。
@@ -67,6 +68,11 @@ npm run emulator -- --device bandpro --once
   - `designWidth=212` 时，Band10/11 的可视区域是 `212×520`，根容器必须限制为 520 设计像素；Band9 通过 `pill-small-layout` 保留 540 设计像素再按 192 宽缩放。所有胶囊屏统一使用 540 高会让 Band10 页面多出 20 像素并出现纵向滚动。
   - 官方 manifest 文档建议提供 `192×192` 图标；当前 1.2.0 使用 `192×192` RGBA 图标，四角保留透明，避免旧启动器把不透明画布显示成黑边。
   - 启动加载屏没有独立的 UX 页面，桌面图标和加载屏都读取 `manifest.icon`。`v1.1.1` 正式包曾使用 `108×108` RGB、无 alpha 图标，并在 Band11 的桌面和加载屏通过实机验证；`96×96` 仅用于诊断。当前回到官方建议的 `192×192` 规格，是为规避其他设备对不透明 `108×108` 画布出现黑边的反馈，不应把 `108×108` 误记为从未正式发布。
+- 红米手表6（432×514）watch-rect 布局：
+  - `designWidth=212` 下可视区域为 `212×252` 设计像素，Pro 的 303 高矩形布局会溢出，不能复用。
+  - watch-rect 使用 180×180 棋盘、41×41 格子、行列间距 45（`WATCH_CELL_STEP_X` / `WATCH_CELL_ROW_OFFSETS`），方块与 Band9 一样绝对定位，避免 flex 累计取整漂移。
+  - 空格网格底图由 `scripts/gen-watch-grid.ps1` 生成（`watch-grid-light.png` / `watch-grid-dark.png`，2x 输出），配色取样自原 rect-grid 素材；改动棋盘坐标必须同步重跑该脚本。
+  - watch-rect 同时置位 `isRect`，复用矩形屏的“隐藏胶囊背景图 + 网格底图”绘制方案；`watch-*` 样式统一追加在样式表末尾，靠同优先级后置规则覆盖 `rect-*` 坐标。
 
 ### Pro 动画层级
 
