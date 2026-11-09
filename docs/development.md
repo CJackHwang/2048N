@@ -6,7 +6,7 @@
 
 1. 构建配置
    - `npm run build` 默认执行 `aiot release --enable-jsc`，不启用 Protobuf 二进制模板。
-   - release 打包需要项目内 `sign/release/` 下的 `private.pem` + `certificate.pem`；当前使用 aiot-toolkit 自带开发证书，供个人侧载安装。上架或更换开发者账号时替换为自己的证书。
+   - release 打包优先读取 `sign/release/`，其次读取 `sign/` 下的 `private.pem` 和 `certificate.pem`；更新已安装应用时应使用原签名证书。
    - `npm run build:compat` 生成不含 JSC 的兼容包；只有目标设备运行时不支持 JSC 时才使用。
    - `npm run build:debug` 才生成 debug 包。
    - `manifest.config.logLevel` 设为 `off`。
@@ -66,7 +66,7 @@ npm run emulator -- --device bandpro --once
 - Band9 的背景素材行距不是可安全交给 flex 自动分配的等距网格；累计取整会让方块逐行漂移。使用预计算的屏幕专用行偏移，动画位移和静态背景必须共用同一组坐标。
 - Band9/10/11 胶囊屏与 Band9 Pro/10 Pro 矩形屏不能只靠统一缩放解决。Pro 需要独立的居中棋盘、统一按钮尺寸和顶部双分数布局；设备分组通过 `screenShape` / `screenWidth` 判断。
   - `designWidth=212` 时，Band10/11 的可视区域是 `212×520`，根容器必须限制为 520 设计像素；Band9 通过 `pill-small-layout` 保留 540 设计像素再按 192 宽缩放。所有胶囊屏统一使用 540 高会让 Band10 页面多出 20 像素并出现纵向滚动。
-  - 官方 manifest 文档建议提供 `192×192` 图标；当前 1.2.0 使用 `192×192` RGBA 图标，四角保留透明，避免旧启动器把不透明画布显示成黑边。
+  - 官方 manifest 文档建议提供 `192×192` 图标；当前 1.3.0 使用 `192×192` RGBA 图标，四角保留透明，避免旧启动器把不透明画布显示成黑边。
   - 启动加载屏没有独立的 UX 页面，桌面图标和加载屏都读取 `manifest.icon`。`v1.1.1` 正式包曾使用 `108×108` RGB、无 alpha 图标，并在 Band11 的桌面和加载屏通过实机验证；`96×96` 仅用于诊断。当前回到官方建议的 `192×192` 规格，是为规避其他设备对不透明 `108×108` 画布出现黑边的反馈，不应把 `108×108` 误记为从未正式发布。
 - 红米手表6（432×514）watch-rect 布局：
   - `designWidth=212` 下可视区域为 `212×252` 设计像素，Pro 的 303 高矩形布局会溢出，不能复用。
